@@ -14,17 +14,18 @@ Lightweight keyboard-first directory editor for VS Code (Emacs dired-inspired).
 ## Default Keybindings (full list)
 Below are the default keybindings contributed by the extension (customizable in VS Code):
 
-- `ctrl+x .` — Toggle dotfiles (show/hide hidden files)
-- `ctrl+x d` — Open Dired / open directory
-- `ctrl+x t` — Open integrated terminal in the current Dired folder (terminal editor; no extra `cd` is run)
-- `ctrl+x ctrl+n f` — Create a new file in the current Dired directory (created but not opened)
-- `ctrl+x ctrl+n d` — Create a new directory in the current Dired directory
-- `ctrl+x ctrl+p` — Copy path of the selected row (or current directory when on header)
-- `Enter` — Open file / enter directory
-- `ctrl+x shift+d` — Delete selected file(s) or folder(s)
-- `alt+w` — Copy selected file(s)/folder(s)
-- `ctrl+b` — Go to parent (up) directory
-- `ctrl+x r` — Refresh directory listing
+- `ctrl+x .` - Toggle dotfiles (show/hide hidden files)
+- `ctrl+x d` - Open Dired / open directory
+- `ctrl+x t` - Open integrated terminal in the current Dired folder (terminal editor; no extra `cd` is run)
+- `ctrl+x ctrl+n f` - Create a new file in the current Dired directory (created but not opened)
+- `ctrl+x ctrl+n d` - Create a new directory in the current Dired directory
+- `ctrl+x ctrl+p` - Copy path of the selected row (or current directory when on header)
+- `ctrl+x p` - Copy file / folder name
+- `Enter` - Open file / enter directory
+- `ctrl+x shift+d` - Delete selected file(s) or folder(s)
+- `alt+w` - Copy selected file(s)/folder(s)
+- `ctrl+b` - Go to parent (up) directory
+- `ctrl+x r` - Refresh directory listing
 
 Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 
@@ -51,7 +52,12 @@ Start the debug session in VS Code (Launch Extension (watch)).
 npm run compile
 ```
 
-Tasks: `.vscode/tasks.json` includes `npm: watch`, `npm: compile`, `npm: test`.
+- Package vsix:
+```powershell
+npm run package
+```
+
+Tasks: `.vscode/tasks.json` includes `npm: watch`, `npm: compile`, `npm: test`, `npm: package`.
 
 ## License
 Apache-2.0

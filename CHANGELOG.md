@@ -1,6 +1,6 @@
 # Changelog
 
-## 2025-11-30
+## Version 0.1.1 - 2025-11-30
 
 - Added an "Open terminal in current Dired folder" command and keybinding
   - Command: `extension.dired.openTerminal`

@@ -372,6 +372,30 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         }
     });
 
+    const commandCopyName = vscode.commands.registerCommand("extension.dired.copyName", async () => {
+        const p = provider.getSelectedPath();
+        if (!p) {
+            vscode.window.setStatusBarMessage("No file or folder selected to copy name.", 3000);
+            return;
+        }
+        try {
+            const name = path.basename(p);
+            await vscode.env.clipboard.writeText(name);
+            try {
+                const stat = fs.statSync(p);
+                if (stat.isDirectory()) {
+                    vscode.window.setStatusBarMessage(`Copied folder name: ${name}`, 3000);
+                } else {
+                    vscode.window.setStatusBarMessage(`Copied file name: ${name}`, 3000);
+                }
+            } catch (e) {
+                vscode.window.setStatusBarMessage(`Copied name: ${name}`, 3000);
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to copy name: ${err}`, 5000);
+        }
+    });
+
     context.subscriptions.push(
         provider,
         commandOpen,
@@ -383,6 +407,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         commandRename,
         commandCopy,
         commandGoUpDir,
+        commandCopyName,
         commandRefresh,
         commandClose,
         commandDelete,

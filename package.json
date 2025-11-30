@@ -2,7 +2,7 @@
 	"name": "vscode-dired-local",
 	"displayName": "vscode-dired (local edit by supacoda)",
 	"description": "dired(File Manager) for VSCode, like Emacs",
-	"version": "0.1.0-local",
+	"version": "0.1.1-local",
 	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
@@ -42,6 +42,11 @@
 				"command": "extension.dired.copyPath",
 				"title": "Copy path of selected file"
 			}
+			,
+			{
+				"command": "extension.dired.copyName",
+				"title": "Copy name of selected file"
+			}
 		],
 		"keybindings": [
 			{
@@ -72,6 +77,11 @@
 			{
 				"key": "ctrl+x ctrl+p",
 				"command": "extension.dired.copyPath",
+				"when": "dired.open && editorTextFocus && !inDebugRepl"
+			},
+			{
+				"key": "ctrl+x p",
+				"command": "extension.dired.copyName",
 				"when": "dired.open && editorTextFocus && !inDebugRepl"
 			},
 			{
@@ -145,7 +155,8 @@
 		"lint": "eslint src --ext ts",
 		"watch": "tsc -watch -p ./",
 		"pretest": "npm run compile && npm run lint",
-		"test": "node ./out/test/runTest.js"
+		"test": "node ./out/test/runTest.js",
+		"package": "npx vsce package"
 	},
 	"devDependencies": {
 		"@types/glob": "^8.0.0",
