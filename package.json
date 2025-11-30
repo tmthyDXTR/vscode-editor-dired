@@ -1,162 +1,184 @@
 {
-  "name": "vscode-dired",
-  "displayName": "vscode-dired",
-  "description": "dired(File Manager) for VSCode, like Emacs",
-  "version": "0.0.9",
-  "publisher": "rrudi",
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/shirou/vscode-dired"
-  },
-  "bugs": {
-    "url": "https://github.com/shirou/vscode-dired/issues"
-  },
-  "engines": {
-    "vscode": "^1.65.0"
-  },
-  "categories": [
-    "Other"
-  ],
-  "keywords": [
-    "filer",
-    "dired"
-  ],
-  "activationEvents": [
-    "onCommand:extension.dired.open"
-  ],
-  "main": "./out/src/extension",
-  "contributes": {
-    "commands": [
-      {
-        "command": "extension.dired.open",
-        "title": "Open dired buffer"
-      }
-    ],
-    "keybindings": [
-      {
-        "key": ".",
-        "command": "extension.dired.toggleDotFiles",
-        "when": "dired.open && editorTextFocus && !inDebugRepl"
-      },
-      {
-        "key": "ctrl+x f",
-        "command": "extension.dired.open",
-        "when": "editorTextFocus && !inDebugRepl"
-      },
-      {
-        "key": "enter",
-        "command": "extension.dired.enter",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "shift+=",
-        "command": "extension.dired.createDir",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "ctrl+x =",
-        "command": "extension.dired.createFile",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "shift+r",
-        "command": "extension.dired.rename",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "shift+d",
-        "command": "extension.dired.delete",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "shift+c",
-        "command": "extension.dired.copy",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "shift+b",
-        "command": "extension.dired.goUpDir",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "m",
-        "command": "extension.dired.select",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "u",
-        "command": "extension.dired.unselect",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "g",
-        "command": "extension.dired.refresh",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      },
-      {
-        "key": "q",
-        "command": "extension.dired.close",
-        "when": "dired.open && !findWidgetVisible && !inQuickOpen"
-      }
-    ],
-    "languages": [
-      {
-        "id": "dired",
-        "extensions": [
-          ""
-        ],
-        "configuration": "./language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "dired",
-        "scopeName": "source.dired",
-        "path": "./dired.tmLanguage.json"
-      }
-    ],
-    "configuration": {
-      "type": "object",
-      "title": "VSCode Dired",
-      "properties": {
-        "dired.fixed_window": {
-          "type": "boolean",
-          "default": "false",
-          "description": "Open dired in the same tab or another tab."
-        },
-        "dired.ask_directory": {
-          "type": "boolean",
-          "default": "true",
-          "description": "Ask directory on opening dired."
-        }
-      }
-    }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "lint": "eslint src --ext ts",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "test": "node ./out/test/runTest.js"
-  },
-  "devDependencies": {
-    "@types/glob": "^8.0.0",
-    "@types/mocha": "^10.0.1",
-    "@types/node": "^18.11.17",
-    "@types/vscode": "^1.65.0",
-    "@typescript-eslint/eslint-plugin": "^5.47.0",
-    "@typescript-eslint/parser": "^5.47.0",
-    "eslint": "^8.30.0",
-    "glob": "^8.0.3",
-    "mocha": "^10.2.0",
-    "typescript": "^4.9.4",
-    "@vscode/test-electron": "^2.3.4"
-  },
-  "dependencies": {
-    "mkdirp": "^1.0.4",
-    "stat-mode": "^1.0.0"
-  },
-  "preview": true
+	"name": "vscode-dired-local",
+	"displayName": "vscode-dired (local edit by supacoda)",
+	"description": "dired(File Manager) for VSCode, like Emacs",
+	"version": "0.1.0-local",
+	"publisher": "rrudi",
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/shirou/vscode-dired"
+	},
+	"bugs": {
+		"url": "https://github.com/shirou/vscode-dired/issues"
+	},
+	"engines": {
+		"vscode": "^1.75.0"
+	},
+	"activationEvents": [
+		"onCommand:extension.dired.open",
+		"onCommand:extension.dired.copyPath"
+	],
+	"categories": [
+		"Other"
+	],
+	"keywords": [
+		"filer",
+		"dired"
+	],
+	"main": "./out/src/extension",
+	"contributes": {
+		"commands": [
+			{
+				"command": "extension.dired.open",
+				"title": "Open dired buffer"
+			},
+			{
+				"command": "extension.dired.copyPath",
+				"title": "Copy path of selected file"
+			}
+		],
+		"keybindings": [
+			{
+				"key": ".",
+				"command": "extension.dired.toggleDotFiles",
+				"when": "dired.open && editorTextFocus && !inDebugRepl"
+			},
+			{
+				"key": "ctrl+x d",
+				"command": "extension.dired.open",
+				"when": "editorTextFocus && !inDebugRepl"
+			},
+			{
+				"key": "ctrl+x ctrl+p",
+				"command": "extension.dired.copyPath",
+				"when": "dired.open && editorTextFocus && !inDebugRepl"
+			},
+			{
+				"key": "enter",
+				"command": "extension.dired.enter",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "shift+=",
+				"command": "extension.dired.createDir",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "ctrl+x =",
+				"command": "extension.dired.createFile",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "shift+r",
+				"command": "extension.dired.rename",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "shift+d",
+				"command": "extension.dired.delete",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "shift+c",
+				"command": "extension.dired.copy",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "shift+b",
+				"command": "extension.dired.goUpDir",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "m",
+				"command": "extension.dired.select",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "u",
+				"command": "extension.dired.unselect",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "g",
+				"command": "extension.dired.refresh",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "q",
+				"command": "extension.dired.close",
+				"when": "dired.open && !findWidgetVisible && !inQuickOpen"
+			}
+		],
+		"languages": [
+			{
+				"id": "dired",
+				"extensions": [
+					""
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "dired",
+				"scopeName": "source.dired",
+				"path": "./dired.tmLanguage.json"
+			}
+		],
+		"configuration": {
+			"type": "object",
+			"title": "VSCode Dired",
+			"properties": {
+				"dired.fixed_window": {
+					"type": "boolean",
+					"default": "false",
+					"description": "Open dired in the same tab or another tab."
+				},
+				"dired.ask_directory": {
+					"type": "boolean",
+					"default": "true",
+					"description": "Ask directory on opening dired."
+				}
+			,
+				"dired.show_path_in_tab": {
+					"type": "boolean",
+					"default": false,
+					"description": "When true, show the full path in the Dired editor tab. When false (default) and `dired.fixed_window` is enabled, the extension will reuse a single tab and show the path only in the buffer header." 
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"lint": "eslint src --ext ts",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"test": "node ./out/test/runTest.js"
+	},
+	"devDependencies": {
+		"@types/glob": "^8.0.0",
+		"@types/mocha": "^10.0.1",
+		"@types/node": "^18.11.17",
+		"@types/vscode": "^1.65.0",
+		"@typescript-eslint/eslint-plugin": "^5.47.0",
+		"@typescript-eslint/parser": "^5.47.0",
+		"eslint": "^8.30.0",
+		"glob": "^8.0.3",
+		"mocha": "^10.2.0",
+		"typescript": "^4.9.4",
+		"@vscode/test-electron": "^2.3.4"
+	},
+	"dependencies": {
+		"mkdirp": "^1.0.4",
+		"stat-mode": "^1.0.0"
+	},
+	"preview": true,
+	"editedBy": "tmthyDXTR (supacoda)",
+	"__metadata": {
+		"installedTimestamp": 1763755378448,
+		"targetPlatform": "undefined",
+		"size": 3776153
+	}
 }

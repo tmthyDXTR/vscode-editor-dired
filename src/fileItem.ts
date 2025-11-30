@@ -106,7 +106,8 @@ export default class FileItem {
     public get uri(): vscode.Uri | undefined {
         const p = path.join(this._dirname, this._filename);
         if (this._isDirectory) {
-            return vscode.Uri.parse(`${DiredProvider.scheme}://${p}`);
+            // Convert the file path into a dired: scheme uri while keeping path information.
+            return vscode.Uri.file(p).with({ scheme: DiredProvider.scheme });
         } else if (this._isFile) {
             const u = pathToFileURL(p);
             return vscode.Uri.parse(u.href);

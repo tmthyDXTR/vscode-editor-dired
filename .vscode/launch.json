@@ -1,29 +1,38 @@
-// A launch configuration that compiles the extension and then opens it inside a new window
+// A launch configuration for debugging the extension. Two configurations provided:
+// 1) Launch Extension (watch) — starts tsc watch, compiles on save, and launches extension.
+// 2) Launch Extension (compile) — runs a single compile before launching.
 {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "configurations": [
-    
         {
-            "name": "Launch Extension",
+            "name": "Launch Extension (watch)",
             "type": "extensionHost",
             "request": "launch",
             "runtimeExecutable": "${execPath}",
-            "args": ["--extensionDevelopmentPath=${workspaceRoot}" ],
-            "stopOnEntry": false,
-            "sourceMaps": true,
-            "outDir": "${workspaceRoot}/out/src",
-            "preLaunchTask": "npm"
+            "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+            "preLaunchTask": "npm: watch",
+            "outFiles": ["${workspaceFolder}/out/**/*.js"],
+            "sourceMaps": true
+        },
+        {
+            "name": "Launch Extension (compile)",
+            "type": "extensionHost",
+            "request": "launch",
+            "runtimeExecutable": "${execPath}",
+            "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+            "preLaunchTask": "npm: compile",
+            "outFiles": ["${workspaceFolder}/out/**/*.js"],
+            "sourceMaps": true
         },
         {
             "name": "Launch Tests",
             "type": "extensionHost",
             "request": "launch",
             "runtimeExecutable": "${execPath}",
-            "args": ["--extensionDevelopmentPath=${workspaceRoot}", "--extensionTestsPath=${workspaceRoot}/out/test" ],
-            "stopOnEntry": false,
-            "sourceMaps": true,
-            "outDir": "${workspaceRoot}/out/test",
-            "preLaunchTask": "npm"
+            "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--extensionTestsPath=${workspaceFolder}/out/test" ],
+            "preLaunchTask": "npm: compile",
+            "outFiles": ["${workspaceFolder}/out/test/**/*.js"],
+            "sourceMaps": true
         }
     ]
 }

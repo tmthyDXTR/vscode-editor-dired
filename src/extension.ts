@@ -115,6 +115,32 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     });
 
+    const commandCopyPath = vscode.commands.registerCommand("extension.dired.copyPath", async () => {
+        const p = provider.getSelectedPath();
+        if (!p) {
+            vscode.window.showInformationMessage("No file or folder selected to copy path.");
+            return;
+        }
+        try {
+            // Normalize the path to resolve '.' references
+            const normalized = path.resolve(p);
+            await vscode.env.clipboard.writeText(normalized);
+            try {
+                const stat = fs.statSync(normalized);
+                if (stat.isDirectory()) {
+                    vscode.window.showInformationMessage(`Copied folder path: ${normalized}`);
+                } else {
+                    vscode.window.showInformationMessage(`Copied file path: ${normalized}`);
+                }
+            } catch (e) {
+                // If stat fails, default message
+                vscode.window.showInformationMessage(`Copied path: ${normalized}`);
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`Failed to copy path: ${err}`);
+        }
+    });
+
     const commandCreateFile = vscode.commands.registerCommand("extension.dired.createFile", async () => {
         function* completionFunc(filePathOrDirPath: string): IterableIterator<vscode.QuickPickItem> {
             let dirname: string;
@@ -219,6 +245,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         commandSelect,
         providerRegistrations
     );
+    context.subscriptions.push(commandCopyPath);
 
     vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor && editor.document.uri.scheme === DiredProvider.scheme) {

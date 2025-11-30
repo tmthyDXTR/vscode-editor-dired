@@ -16,9 +16,14 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _fixed_window: boolean;
     private _show_dot_files: boolean = true;
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
+    private _show_path_in_tab: boolean = false;
 
     constructor(fixed_window: boolean) {
         this._fixed_window = fixed_window;
+        const cfg = vscode.workspace.getConfiguration('dired');
+        if (cfg.has('show_path_in_tab')) {
+            this._show_path_in_tab = cfg.get('show_path_in_tab') as boolean;
+        }
     }
 
     dispose() {
@@ -39,7 +44,11 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             return undefined;
         }
         const line0 = doc.lineAt(0).text;
-        const dir = line0.substring(0, line0.length - 1);
+        // Header may be of the form "Dired: <dir>:" or simply "<dir>:" for backward compatibility.
+        let header = line0.substring(0, line0.length - 1);
+        header = header.replace(/^Dired:\s*/, '');
+        // Trim whitespace
+        const dir = header.trim();
         return dir;
     }
 
@@ -55,6 +64,11 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
         const uri = f.uri;
         if (!uri) {
+            return;
+        }
+        // If the user pressed Enter on the parent entry, go up one directory
+        if (f.fileName === '..') {
+            this.goUpDir();
             return;
         }
         if (uri.scheme !== DiredProvider.scheme) {
@@ -136,25 +150,58 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (!this.dirname || this.dirname === "/") {
             return;
         }
-        const p = path.join(this.dirname, "..");
+        // Resolve the parent path and open it in-place
+        const p = path.resolve(this.dirname, "..");
         this.openDir(p);
     }
 
-    openDir(path: string) {
-        const f = new FileItem(path, "", true); // Incomplete FileItem just to get URI.
-        const uri = f.uri;
+    openDir(dirPath: string) {
+        // Build URI for the directory. Always use a per-directory label URI so the tab title reflects
+        // the directory path, but if `fixed_window` is enabled, close other dired editors so we still
+        // have a single Dired tab.
+        // If `fixed_window` is true and `show_path_in_tab` is false, reuse FIXED_URI so the same
+        // editor instance is used across directories. If `show_path_in_tab` is true, use a path
+        // URI so the tab shows the path; we will close other dired editors to keep a single tab.
+        const uri = (this._fixed_window && !this._show_path_in_tab) ? FIXED_URI : this.createPathUriForDir(dirPath);
         if (uri) {
-            this.createBuffer(path)
-                .then(() => vscode.workspace.openTextDocument(uri))
-                .then(doc => {
-                    vscode.window.showTextDocument(
-                        doc,
-                        this.getTextDocumentShowOptions(true)
-                    );
-                    vscode.languages.setTextDocumentLanguage(doc, "dired");
-                }
-                );
+            this.createBuffer(dirPath)
+                .then(() => {
+                    // Notify VS Code that content for this virtual document changed
+                    this._onDidChange.fire(uri);
+                    return vscode.workspace.openTextDocument(uri);
+                })
+                .then(doc => vscode.window.showTextDocument(doc, this.getTextDocumentShowOptions(this._fixed_window)))
+                .then(editor => {
+                    try {
+                        vscode.languages.setTextDocumentLanguage(editor.document, "dired");
+                    } catch (e) { }
+                    // Move the cursor to the filename column (matches parseLine offset)
+                    const filenameColumn = 52;
+                    const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
+                    try {
+                        const pos = new vscode.Position(targetLine, filenameColumn);
+                        editor.selection = new vscode.Selection(pos, pos);
+                        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                    } catch (e) {
+                        // ignore if position is out of range
+                    }
+                    // When fixed_window is enabled, ensure only one Dired editor tab exists by closing other
+                    // Dired editors that are not this one. This preserves the "single Dired tab" behavior
+                    // while still showing the directory path in the tab title.
+                    if (this._fixed_window) {
+                        // Close other dired editors, exempting the one we opened. If `show_path_in_tab` is
+                        // enabled, we'll exempt the URI we just created (which is a per-directory URI),
+                        // otherwise we exempt FIXED_URI.
+                        const exempt = this._show_path_in_tab ? editor.document.uri : FIXED_URI;
+                        this.closeOtherDiredEditors(exempt);
+                    }
+                });
         }
+    }
+
+    private createPathUriForDir(dir: string): vscode.Uri {
+        // Use a file-style path URI but with the dired scheme so the tab title shows the path.
+        return vscode.Uri.file(dir).with({ scheme: DiredProvider.scheme });
     }
 
     showFile(uri: vscode.Uri) {
@@ -170,14 +217,31 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     }
 
     private get uri(): vscode.Uri {
-        if (this.dirname) {
-            const f = new FileItem(this.dirname, "", true); // Incomplete FileItem just to get URI.
-            const uri = f.uri;
-            if (uri) {
-                return uri;
-            }
+        // For fixed window, return FIXED_URI unless the user requested the path be shown in the tab.
+        if (this._fixed_window && !this._show_path_in_tab) {
+            return FIXED_URI;
         }
-        return FIXED_URI;
+        // For non-fixed windows, return a per-directory URI so each open tab displays its path.
+        const dir = this.dirname;
+        if (!dir) {
+            return FIXED_URI;
+        }
+        return vscode.Uri.file(dir).with({ scheme: DiredProvider.scheme });
+    }
+
+    // Return the filesystem path of the currently selected item in the active Dired buffer.
+    public getSelectedPath(): string | null {
+        const f = this.getFile();
+        if (!f) {
+            // Cursor on header or no file selected -> return current directory path
+            const d = this.dirname || '.';
+            return path.resolve(d);
+        }
+        // If the user selected '.' or '..', return the parent/dir instead of '.' literal
+        if (f.fileName === '.' || f.fileName === '..') {
+            return path.resolve(this.dirname || '.');
+        }
+        return path.resolve(f.path || '.');
     }
 
     private render(): Thenable<string> {
@@ -195,15 +259,67 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                 } catch (err) {
                     vscode.window.showErrorMessage(`Could not read ${dirname}: ${err}`);
                 }
+                    
             }
 
             this._buffers = [
-                dirname + ":", // header line
+                `${dirname}:`, // header line - only show the path
             ];
             this._buffers = this._buffers.concat(files.map((f) => f.line()));
 
             resolve(this._buffers);
         });
+    }
+
+    private async closeOtherDiredEditors(exemptUri: vscode.Uri) {
+        // If the Tabs API is available, use it to close tabs without changing focus or showing them
+        const anyWindow = (vscode.window as any);
+        if (anyWindow && anyWindow.tabGroups && typeof anyWindow.tabGroups.close === 'function') {
+            const tabsToClose: any[] = [];
+            for (const group of anyWindow.tabGroups.all) {
+                for (const tab of group.tabs) {
+                    // Tab input might be of the form { uri }
+                    const inputUri = tab.input && tab.input.uri;
+                    if (inputUri && inputUri.scheme === DiredProvider.scheme && inputUri.toString() !== exemptUri.toString()) {
+                        tabsToClose.push(tab);
+                    }
+                }
+            }
+            if (tabsToClose.length) {
+                try {
+                    await anyWindow.tabGroups.close(tabsToClose, true);
+                }
+                catch (err) { /* ignore errors */ }
+            }
+            return;
+        }
+
+        // Fallback: iterate through visibleTextEditors first, close those with preserveFocus true to
+        // reduce flicker. This won't close editors that are not visible.
+        for (const e of vscode.window.visibleTextEditors) {
+            const u = e.document.uri;
+            if (u && u.scheme === DiredProvider.scheme && u.toString() !== exemptUri.toString()) {
+                try {
+                    /* eslint-disable @typescript-eslint/no-floating-promises */
+                    // Show without focus change; then close the active editor.
+                    await vscode.window.showTextDocument(e.document, { viewColumn: e.viewColumn, preserveFocus: true, preview: false });
+                    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+                } catch (err) { /* ignore */ }
+            }
+        }
+
+        // Also try to close other Dired documents that aren't visible (best-effort). These may lead to focus
+        // changes depending on VS Code behavior, so they are done after visible ones.
+        for (const doc of vscode.workspace.textDocuments) {
+            const u = doc.uri;
+            if (u && u.scheme === DiredProvider.scheme && u.toString() !== exemptUri.toString()) {
+                try {
+                    /* eslint-disable @typescript-eslint/no-floating-promises */
+                    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+                    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+                } catch (err) { /* ignore */ }
+            }
+        }
     }
 
     private readDir(dirname: string): FileItem[] {
