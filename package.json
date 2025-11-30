@@ -3,14 +3,14 @@
 	"displayName": "vscode-dired (local edit by supacoda)",
 	"description": "dired(File Manager) for VSCode, like Emacs",
 	"version": "0.1.0-local",
-	"publisher": "rrudi",
+	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/shirou/vscode-dired"
+		"url": "https://github.com/tmthyDXTR/vscode-editor-dired"
 	},
 	"bugs": {
-		"url": "https://github.com/shirou/vscode-dired/issues"
+		"url": "https://github.com/tmthyDXTR/vscode-editor-dired"
 	},
 	"engines": {
 		"vscode": "^1.75.0"
