@@ -1,28 +1,43 @@
-'use strict';
+import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+import FileItem from "./fileItem";
+import DiredProvider from "./provider";
+import { autocompletedInputBox } from "./autocompletedInputBox";
 
-import * as vscode from 'vscode';
-import DiredProvider from './provider';
-import FileItem from './fileItem';
-
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { autocompletedInputBox } from './autocompletedInputBox';
-
-export interface ExtensionInternal {
-    DiredProvider: DiredProvider,
+// Move recursive helpers to module scope to avoid recreating closures every time
+async function copyRecursive(src: string, dest: string) {
+    const sstat = await fs.promises.stat(src);
+    if (sstat.isDirectory()) {
+        await fs.promises.mkdir(dest, { recursive: true });
+        for (const name of await fs.promises.readdir(src)) {
+            await copyRecursive(path.join(src, name), path.join(dest, name));
+        }
+    } else {
+        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+        await fs.promises.copyFile(src, dest);
+    }
 }
 
-export function activate(context: vscode.ExtensionContext): ExtensionInternal {
-    let ask_dir = true;
-    const configuration = vscode.workspace.getConfiguration('dired');
-    if (configuration.has('ask_directory')) {
-        ask_dir = configuration.ask_directory;
+async function restoreRecursive(src: string, dest: string) {
+    const sstat = await fs.promises.stat(src);
+    if (sstat.isDirectory()) {
+        await fs.promises.mkdir(dest, { recursive: true });
+        for (const name of await fs.promises.readdir(src)) {
+            await restoreRecursive(path.join(src, name), path.join(dest, name));
+        }
+    } else {
+        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+        await fs.promises.copyFile(src, dest);
     }
-    let fixed_window = false;
-    if (configuration.has('fixed_window')) {
-        fixed_window = configuration.fixed_window;
-    }
+}
+
+export function activate(context: vscode.ExtensionContext) {
+    "use strict";
+    const cfg = vscode.workspace.getConfiguration("dired");
+    const fixed_window = cfg.get<boolean>("fixed_window") || false;
+    const ask_dir = cfg.get<boolean>("ask_dir") || false;
 
     const provider = new DiredProvider(fixed_window);
 
@@ -79,20 +94,26 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
                 provider.openDir(dir);
             } else {
                 vscode.window.showInputBox({ value: dir, valueSelection: [dir.length, dir.length] })
-                    .then((path) => {
-                        if (!path) {
-                            return;
-                        }
-                        if (fs.statSync(path).isDirectory()) {
-                            provider.openDir(path);
-                        } else if (fs.statSync(path).isFile()) {
-                            const f = new FileItem(path, "", false, true); // Incomplete FileItem just to get URI.
-                            const uri = f.uri;
-                            if (uri) {
-                                provider.showFile(uri);
+                        .then(async (path) => {
+                            if (!path) {
+                                return;
                             }
-                        }
-                    });
+                            try {
+                                const st = await fs.promises.stat(path);
+                                if (st.isDirectory()) {
+                                    provider.openDir(path);
+                                    return;
+                                }
+                                if (st.isFile()) {
+                                    const f = new FileItem(path, "", false, true); // Incomplete FileItem just to get URI.
+                                    const uri = f.uri;
+                                    if (uri) provider.showFile(uri);
+                                    return;
+                                }
+                            } catch (e) {
+                                // ignore stat errors
+                            }
+                        });
             }
         }
     });
@@ -137,7 +158,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             let selected: string = selectedCandidate ? selectedCandidate : fallback;
             let cwd: string = selected;
             try {
-                const stat = fs.statSync(selected);
+                const stat = await fs.promises.stat(selected);
                 if (stat.isFile()) cwd = path.dirname(selected);
             } catch (e) { cwd = fallback; }
             try {
@@ -193,26 +214,14 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         }
 
         try {
-            const stat = fs.statSync(selected);
+            const stat = await fs.promises.stat(selected);
             const isDir = stat.isDirectory();
             // Create a backup copy to allow undo
             const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
             await fs.promises.mkdir(backupRoot, { recursive: true });
             const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
             const backupPath = path.join(backupRoot, backupName);
-            // Copy recursively to backup
-            async function copyRecursive(src: string, dest: string) {
-                const sstat = await fs.promises.stat(src);
-                if (sstat.isDirectory()) {
-                    await fs.promises.mkdir(dest, { recursive: true });
-                    for (const name of await fs.promises.readdir(src)) {
-                        await copyRecursive(path.join(src, name), path.join(dest, name));
-                    }
-                } else {
-                    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-                    await fs.promises.copyFile(src, dest);
-                }
-            }
+            // Copy recursively to backup using module-level helper
             await copyRecursive(selected, backupPath);
 
             // Move original to OS Trash
@@ -221,9 +230,9 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             } catch (e) {
                 // Fallback to fs rm if workspace API fails
                 if (isDir) {
-                    try { fs.rmSync(selected, { recursive: true, force: true }); } catch { fs.rmdirSync(selected, { recursive: true }); }
+                    try { await fs.promises.rm(selected, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(selected, { recursive: true }); } catch {} }
                 } else {
-                    fs.unlinkSync(selected);
+                    try { await fs.promises.unlink(selected); } catch {}
                 }
             }
 
@@ -255,62 +264,49 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
     });
 
     const commandCreateFile = vscode.commands.registerCommand("extension.dired.createFile", async () => {
-        function* completionFunc(filePathOrDirPath: string): IterableIterator<vscode.QuickPickItem> {
-            let dirname: string;
+        async function completionFunc(filePathOrDirPath: string): Promise<Iterable<vscode.QuickPickItem>> {
+            const items: vscode.QuickPickItem[] = [];
+            let dirname: string | undefined;
             if (!path.isAbsolute(filePathOrDirPath)) {
-                if (provider.dirname == undefined)
-                    return
+                if (provider.dirname == undefined) return items;
                 filePathOrDirPath = path.join(provider.dirname, filePathOrDirPath);
             }
             try {
-                let stat = fs.statSync(filePathOrDirPath);
-                if (stat.isDirectory()) {
-                    dirname = filePathOrDirPath;
-                    yield {
-                        detail: "Open " + path.basename(filePathOrDirPath) + "/",
-                        label: filePathOrDirPath,
-                        buttons: [ { iconPath: vscode.ThemeIcon.Folder } ]
-                    };
-                }
-                else {
-                    yield {
-                        detail: "Open " + path.basename(filePathOrDirPath),
-                        label: filePathOrDirPath,
-                        buttons: [ { iconPath: vscode.ThemeIcon.File } ]
-                    };
-
-                    dirname = path.dirname(filePathOrDirPath);
-                }
-            }
-            catch
-            {
-                yield {
-                    detail: "Create " + path.basename(filePathOrDirPath),
-                    label: filePathOrDirPath,
-                    buttons: [ { iconPath: vscode.ThemeIcon.File } ]
-                }
-                dirname = path.dirname(filePathOrDirPath);
                 try {
-                    fs.accessSync(filePathOrDirPath, fs.constants.F_OK);
-                }
-                catch
-                {
-                    return;
-                }
-            }
-            for (let name of fs.readdirSync(dirname)) {
-                const fullpath = path.join(dirname, name);
-                if (fs.statSync(fullpath).isDirectory())
-                    yield {
-                        label: fullpath, detail: "Open " + name + "/",
-                        buttons: [ { iconPath: vscode.ThemeIcon.Folder } ]
+                    const stat = await fs.promises.stat(filePathOrDirPath);
+                    if (stat.isDirectory()) {
+                        dirname = filePathOrDirPath;
+                        items.push({ detail: "Open " + path.basename(filePathOrDirPath) + "/", label: filePathOrDirPath, buttons: [ { iconPath: vscode.ThemeIcon.Folder } ] });
+                    } else {
+                        items.push({ detail: "Open " + path.basename(filePathOrDirPath), label: filePathOrDirPath, buttons: [ { iconPath: vscode.ThemeIcon.File } ] });
+                        dirname = path.dirname(filePathOrDirPath);
                     }
-                else
-                    yield {
-                        label: fullpath, detail: "Open" + name,
-                        buttons: [ { iconPath: vscode.ThemeIcon.File } ]
-                    }
+                } catch {
+                    items.push({ detail: "Create " + path.basename(filePathOrDirPath), label: filePathOrDirPath, buttons: [ { iconPath: vscode.ThemeIcon.File } ] });
+                    dirname = path.dirname(filePathOrDirPath);
+                    try { await fs.promises.access(filePathOrDirPath, fs.constants.F_OK); } catch { return items; }
+                }
+
+                if (dirname) {
+                    try {
+                        const names = await fs.promises.readdir(dirname);
+                        for (const name of names) {
+                            const fullpath = path.join(dirname, name);
+                            try {
+                                const s = await fs.promises.stat(fullpath);
+                                if (s.isDirectory()) {
+                                    items.push({ label: fullpath, detail: "Open " + name + "/", buttons: [ { iconPath: vscode.ThemeIcon.Folder } ] });
+                                } else {
+                                    items.push({ label: fullpath, detail: "Open" + name, buttons: [ { iconPath: vscode.ThemeIcon.File } ] });
+                                }
+                            } catch (e) { /* ignore individual stat errors */ }
+                        }
+                    } catch (e) { /* ignore read errors */ }
+                }
+            } catch (e) {
+                // ignore
             }
+            return items;
         }
         function processSelf(self: vscode.QuickPick<vscode.QuickPickItem>) {
             self.placeholder = "Create File or Open"
@@ -358,7 +354,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             const normalized = path.resolve(p);
             await vscode.env.clipboard.writeText(normalized);
             try {
-                const stat = fs.statSync(normalized);
+                const stat = await fs.promises.stat(normalized);
                 if (stat.isDirectory()) {
                     vscode.window.setStatusBarMessage(`Copied folder path: ${normalized}`, 3000);
                 } else {
@@ -382,7 +378,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             const name = path.basename(p);
             await vscode.env.clipboard.writeText(name);
             try {
-                const stat = fs.statSync(p);
+                const stat = await fs.promises.stat(p);
                 if (stat.isDirectory()) {
                     vscode.window.setStatusBarMessage(`Copied folder name: ${name}`, 3000);
                 } else {
@@ -429,18 +425,23 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             header = header.replace(/^Dired:\s*/, '').trim();
             const dir = header || undefined;
 
-            for (let i = 1; i < document.lineCount; i++) {
+            // Create links for the document up to a safe cap (`dired.maxEntries`) so
+            // links are immediately available. This avoids the complexity of trying
+            // to force VS Code to re-run link providers on scroll.
+            const cfg = vscode.workspace.getConfiguration('dired');
+            const MAX_LINK_LINES = cfg.get<number>('maxEntries') || 5000;
+            const endLine = Math.min(document.lineCount - 1, MAX_LINK_LINES);
+            for (let i = 1; i <= endLine; i++) {
                 const line = document.lineAt(i).text;
                 if (!line || line.length <= 52) continue;
                 try {
-                    // Use existing parser to extract filename and build a FileItem
                     const item = FileItem.parseLine(dir || '.', line);
                     const fname = item.fileName;
                     if (!fname) continue;
                     const startPos = new vscode.Position(i, 52);
                     const endPos = new vscode.Position(i, 52 + fname.length);
                     const range = new vscode.Range(startPos, endPos);
-                    const target = item.uri; // for directories this yields dired: URI, for files a file: URI
+                    const target = item.uri;
                     if (target) {
                         links.push(new vscode.DocumentLink(range, target));
                     }
@@ -453,6 +454,54 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
     });
     context.subscriptions.push(linkProvider);
 
+    // When the visible ranges of a Dired editor change (scroll/resize), refresh
+    // the provider for that directory so DocumentLinkProvider will regenerate links
+    // for the newly visible lines. Debounce per-document to avoid churn while
+    // scrolling quickly.
+    const _visibleRangeTimers: Map<string, NodeJS.Timeout> = new Map();
+    const visibleRangeListener = vscode.window.onDidChangeTextEditorVisibleRanges((e) => {
+        try {
+            const doc = e.textEditor.document;
+            if (!doc || doc.uri.scheme !== DiredProvider.scheme) return;
+            // derive directory from header line (same logic as link provider)
+            let header = doc.lineAt(0).text || '';
+            header = header.replace(/:\s*$/, '');
+            header = header.replace(/^Dired:\s*/, '').trim();
+            const dir = header || undefined;
+            if (!dir) return;
+
+            const key = doc.uri.toString();
+            const prev = _visibleRangeTimers.get(key);
+            if (prev) clearTimeout(prev);
+            const t = setTimeout(async () => {
+                _visibleRangeTimers.delete(key);
+                try { await provider.notifyDirChanged(dir as string); } catch (e) { /* ignore */ }
+            }, 150);
+            _visibleRangeTimers.set(key, t);
+        } catch (e) { /* ignore errors */ }
+    });
+    context.subscriptions.push(visibleRangeListener);
+
+    // Ensure visible-range timers get cleared when the extension is deactivated
+    context.subscriptions.push(new vscode.Disposable(() => {
+        try {
+            for (const t of _visibleRangeTimers.values()) {
+                try { clearTimeout(t); } catch (e) { /* ignore */ }
+            }
+            _visibleRangeTimers.clear();
+        } catch (e) { /* ignore */ }
+    }));
+
+    // When a dired document is closed, clear provider buffers to free memory
+    const closeListener = vscode.workspace.onDidCloseTextDocument((doc) => {
+        try {
+            if (doc && doc.uri && doc.uri.scheme === DiredProvider.scheme) {
+                try { provider.clearBuffers(); } catch (e) { /* ignore */ }
+            }
+        } catch (e) { /* ignore */ }
+    });
+    context.subscriptions.push(closeListener);
+
     const commandUndo = vscode.commands.registerCommand('extension.dired.undoLastAction', async () => {
         const la: any = context.workspaceState.get('dired.lastAction') || null;
         if (!la) {
@@ -461,19 +510,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         }
         try {
             if (la.type === 'delete') {
-                // Restore from backup
-                async function restoreRecursive(src: string, dest: string) {
-                    const sstat = await fs.promises.stat(src);
-                    if (sstat.isDirectory()) {
-                        await fs.promises.mkdir(dest, { recursive: true });
-                        for (const name of await fs.promises.readdir(src)) {
-                            await restoreRecursive(path.join(src, name), path.join(dest, name));
-                        }
-                    } else {
-                        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-                        await fs.promises.copyFile(src, dest);
-                    }
-                }
+                // Restore from backup using module-level helper
                 await restoreRecursive(la.backup, la.path);
                 await context.workspaceState.update('dired.lastAction', null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
@@ -483,7 +520,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
                 try {
                     await vscode.workspace.fs.delete(vscode.Uri.file(la.path), { useTrash: true });
                 } catch (e) {
-                    try { fs.unlinkSync(la.path); } catch {}
+                    try { await fs.promises.unlink(la.path); } catch {}
                 }
                 await context.workspaceState.update('dired.lastAction', null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}

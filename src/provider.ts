@@ -7,6 +7,25 @@ import * as path from 'path';
 import FileItem from './fileItem';
 import * as autoBox from './autocompletedInputBox'
 
+// Reuse encoder/decoder instances to avoid allocating them repeatedly in hot paths
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+// Move common recursive copy helper to module scope so the function object
+// isn't reallocated every time it's used by methods like `copySelected`.
+async function copyRecursiveHelper(srcPath: string, destPath: string) {
+    const sstat = await fs.promises.stat(srcPath);
+    if (sstat.isDirectory()) {
+        await fs.promises.mkdir(destPath, { recursive: true });
+        for (const name of await fs.promises.readdir(srcPath)) {
+            await copyRecursiveHelper(path.join(srcPath, name), path.join(destPath, name));
+        }
+    } else {
+        await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+        await fs.promises.copyFile(srcPath, destPath);
+    }
+}
+
 const FIXED_URI: vscode.Uri = vscode.Uri.parse('dired://fixed_window');
 
 export default class DiredProvider implements vscode.TextDocumentContentProvider {
@@ -20,6 +39,13 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
     private _show_path_in_tab: boolean = false;
     private _watcher: vscode.FileSystemWatcher | null = null;
+    // Lightweight per-directory cache to store minimal file metadata and avoid
+    // retaining heavy FileItem or formatted-line objects between operations.
+    // Each cache entry stores { entries: Array, dirMtime?: number } so we can
+    // validate freshness against the directory mtime before reusing.
+    private _dirCache: Map<string, { entries: Array<any>, dirMtime?: number }> = new Map();
+    // debounce timers for watchers to coalesce rapid FS events
+    private _watchDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
 
     constructor(fixed_window: boolean) {
         this._fixed_window = fixed_window;
@@ -32,6 +58,24 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     dispose() {
         this._onDidChange.dispose();
         try { if (this._watcher) { this._watcher.dispose(); this._watcher = null; } } catch (e) { }
+        try {
+            // Clear any pending debounce timers to avoid retaining closures
+            for (const t of this._watchDebounceTimers.values()) {
+                try { clearTimeout(t); } catch (e) { /* ignore */ }
+            }
+            this._watchDebounceTimers.clear();
+            // Clear per-dir cache to release memory
+            try { this._dirCache.clear(); } catch (e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
+    }
+
+    // Clear any in-memory buffers held by the provider to free memory.
+    public clearBuffers() {
+        try {
+            this._buffers = [];
+            // Also free any cached per-directory metadata to reduce retained memory.
+            try { this._dirCache.clear(); } catch (e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
     }
 
     get onDidChange() {
@@ -119,7 +163,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             type: vscode.FileType.File,
             ctime: Date.now(),
             mtime: Date.now(),
-            size: this._buffers ? Buffer.from(this._buffers.join('\n')).length : 0
+            // compute size without creating an intermediate Buffer to reduce memory churn
+            size: this._buffers ? TEXT_ENCODER.encode(this._buffers.join('\n')).length : 0
         };
     }
 
@@ -136,7 +181,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // Return a Uint8Array. Buffer is a Uint8Array at runtime but some TS settings
         // (lib/DOM/SharedArrayBuffer differences) can make the types incompatible.
         // Use TextEncoder to produce a proper Uint8Array instead of relying on Buffer.
-        return new TextEncoder().encode(content);
+        return TEXT_ENCODER.encode(content);
     }
 
     // When the user saves the dired buffer, VS Code will call writeFile with the new content.
@@ -147,7 +192,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // Ensure current buffer reflects actual FS state before compare
         await this.createBuffer(dir);
         const oldLines = this._buffers.slice();
-        const newText = Buffer.from(content).toString('utf8');
+        // decode without allocating an intermediate Node Buffer
+        const newText = TEXT_DECODER.decode(content);
         const newLines = newText.split(/\r?\n/);
 
         // Align lengths by padding with empty strings if needed
@@ -300,18 +346,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             dest = path.join(this.dirname, dest);
         }
 
-        async function copyRecursive(srcPath: string, destPath: string) {
-            const sstat = await fs.promises.stat(srcPath);
-            if (sstat.isDirectory()) {
-                await fs.promises.mkdir(destPath, { recursive: true });
-                for (const name of await fs.promises.readdir(srcPath)) {
-                    await copyRecursive(path.join(srcPath, name), path.join(destPath, name));
-                }
-            } else {
-                await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
-                await fs.promises.copyFile(srcPath, destPath);
-            }
-        }
+        // Use module-scoped helper to avoid recreating the function on each call
+        const copyRecursive = copyRecursiveHelper;
 
         const cwd = this.dirname;
         (async () => {
@@ -335,7 +371,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             }
         })();
     }
-    deleteSelected() {
+    async deleteSelected() {
         const f = this.getFile();
         if (!f) {
             return;
@@ -346,30 +382,29 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
         const target = path.join(cwd, f.fileName);
         try {
-            const stat = fs.statSync(target);
+            const stat = await fs.promises.stat(target);
             if (stat.isDirectory()) {
                 try {
-                    fs.rmSync(target, { recursive: true, force: true });
+                    await fs.promises.rm(target, { recursive: true, force: true });
                 } catch (e) {
-                    fs.rmdirSync(target, { recursive: true });
+                    try { await fs.promises.rmdir(target, { recursive: true } as any); } catch {}
                 }
             } else {
-                fs.unlinkSync(target);
+                try { await fs.promises.unlink(target); } catch {}
             }
             // Refresh the specific directory buffer we modified
-                this.createBuffer(cwd as string).then(() => {
-                const uri = this.createPathUriForDir(cwd as string);
-                this._onDidChange.fire(uri);
-                this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
-                // Also notify the active Dired URI to cover fixed_window mode
-                try {
-                    const activeUri = this.uri;
-                    if (activeUri && activeUri.toString() !== uri.toString()) {
-                        this._onDidChange.fire(activeUri);
-                        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
-                    }
-                } catch (e) { /* ignore */ }
-            });
+            await this.createBuffer(cwd as string);
+            const uri = this.createPathUriForDir(cwd as string);
+            this._onDidChange.fire(uri);
+            this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+            // Also notify the active Dired URI to cover fixed_window mode
+            try {
+                const activeUri = this.uri;
+                if (activeUri && activeUri.toString() !== uri.toString()) {
+                    this._onDidChange.fire(activeUri);
+                    this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+                }
+            } catch (e) { /* ignore */ }
             vscode.window.setStatusBarMessage(`${target} was deleted`, 3000);
         } catch (err) {
             vscode.window.setStatusBarMessage(`Failed to delete ${target}: ${err}`, 5000);
@@ -401,45 +436,32 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // editor instance is used across directories. If `show_path_in_tab` is true, use a path
         // URI so the tab shows the path; we will close other dired editors to keep a single tab.
         const uri = (this._fixed_window && !this._show_path_in_tab) ? FIXED_URI : this.createPathUriForDir(dirPath);
-        if (uri) {
-            this.createBuffer(dirPath)
-                .then(() => {
-                    // Notify VS Code that content for this virtual document changed
-                    this._onDidChange.fire(uri);
-                    return vscode.workspace.openTextDocument(uri);
-                })
-                .then(doc => vscode.window.showTextDocument(doc, this.getTextDocumentShowOptions(this._fixed_window)))
-                .then(editor => {
-                    try {
-                        vscode.languages.setTextDocumentLanguage(editor.document, "dired");
-                    } catch (e) { }
-                    // Move the cursor to the filename column (matches parseLine offset)
-                    const filenameColumn = 52;
-                    const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
-                    try {
-                        const pos = new vscode.Position(targetLine, filenameColumn);
-                        editor.selection = new vscode.Selection(pos, pos);
-                        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-                    } catch (e) {
-                        // ignore if position is out of range
-                    }
-                    // When fixed_window is enabled, ensure only one Dired editor tab exists by closing other
-                    // Dired editors that are not this one. This preserves the "single Dired tab" behavior
-                    // while still showing the directory path in the tab title.
-                    if (this._fixed_window) {
-                        // Close other dired editors, exempting the one we opened. If `show_path_in_tab` is
-                        // enabled, we'll exempt the URI we just created (which is a per-directory URI),
-                        // otherwise we exempt FIXED_URI.
-                        const exempt = this._show_path_in_tab ? editor.document.uri : FIXED_URI;
-                        this.closeOtherDiredEditors(exempt);
-                    }
-                    // Setup a FileSystemWatcher for this open directory so external changes
-                    // (create/delete/modify) cause the listing to refresh automatically.
-                    try {
-                        this.setupWatcher(dirPath);
-                    } catch (e) { /* ignore */ }
-                });
-        }
+        if (!uri) return;
+
+        // Open the dired document. readFile will call createBuffer when the document is read,
+        // so avoid pre-populating the buffer here to prevent duplicate heavy allocations.
+        vscode.workspace.openTextDocument(uri)
+            .then(doc => vscode.window.showTextDocument(doc, this.getTextDocumentShowOptions(this._fixed_window)))
+            .then(editor => {
+                try { vscode.languages.setTextDocumentLanguage(editor.document, "dired"); } catch (e) { }
+                // Move the cursor to the filename column (matches parseLine offset)
+                const filenameColumn = 52;
+                const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
+                try {
+                    const pos = new vscode.Position(targetLine, filenameColumn);
+                    editor.selection = new vscode.Selection(pos, pos);
+                    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                } catch (e) { /* ignore if out of range */ }
+
+                if (this._fixed_window) {
+                    const exempt = this._show_path_in_tab ? editor.document.uri : FIXED_URI;
+                    this.closeOtherDiredEditors(exempt).then(undefined, () => { /* ignore */ });
+                }
+
+                // Setup a FileSystemWatcher for this open directory so external changes
+                // (create/delete/modify) cause the listing to refresh automatically.
+                try { this.setupWatcher(dirPath); } catch (e) { /* ignore */ }
+            }).then(undefined, () => { /* ignore open errors */ });
     }
 
     private setupWatcher(dir: string) {
@@ -454,12 +476,19 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         try {
             const pattern = new vscode.RelativePattern(dir, '**');
             this._watcher = vscode.workspace.createFileSystemWatcher(pattern);
-            const onChange = async () => {
-                try { await this.notifyDirChanged(dir); } catch (e) { /* ignore */ }
+            // Debounce rapid events so bursts coalesce into a single refresh
+            const schedule = () => {
+                const prev = this._watchDebounceTimers.get(dir);
+                if (prev) clearTimeout(prev);
+                const t = setTimeout(async () => {
+                    this._watchDebounceTimers.delete(dir);
+                    try { await this.notifyDirChanged(dir); } catch (e) { /* ignore */ }
+                }, 200);
+                this._watchDebounceTimers.set(dir, t);
             };
-            this._watcher.onDidCreate(onChange);
-            this._watcher.onDidChange(onChange);
-            this._watcher.onDidDelete(onChange);
+            this._watcher.onDidCreate(schedule);
+            this._watcher.onDidChange(schedule);
+            this._watcher.onDidDelete(schedule);
         } catch (e) {
             // ignore watcher failures (some environments may restrict watchers)
             try { if (this._watcher) { this._watcher.dispose(); this._watcher = null; } } catch (ee) { }
@@ -517,25 +546,128 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         });
     }
 
-    private createBuffer(dirname: string): Thenable<string[]> {
-        return new Promise((resolve) => {
-            let files: FileItem[] = [];
-            if (fs.statSync(dirname).isDirectory()) {
+    private async createBuffer(dirname: string): Promise<string[]> {
+        const buffers: string[] = [];
+        buffers.push(`${dirname}:`);
+
+        // Configurable safety cap for huge directories
+        const cfg = vscode.workspace.getConfiguration('dired');
+        const MAX_ENTRIES = cfg.get<number>('maxEntries') || 5000;
+
+        try {
+            const st = await fs.promises.stat(dirname);
+            if (!st.isDirectory()) {
+                this._buffers = buffers;
+                return this._buffers;
+            }
+        } catch (e) {
+            this._buffers = buffers;
+            return this._buffers;
+        }
+
+        try {
+            const entries = await fs.promises.readdir(dirname);
+            // Fast-path: if we have a recent lightweight cache for this directory,
+            // validate it against the directory mtime and reuse it to avoid
+            // re-statting all files. This greatly reduces work when reopening the
+            // same dired buffer. If the directory mtime differs, fall through to
+            // rebuild the listing so new files/deletes are picked up.
+            const cachedEntry = this._dirCache.get(dirname);
+            if (cachedEntry && Array.isArray(cachedEntry.entries) && cachedEntry.entries.length > 0) {
                 try {
-                    files = this.readDir(dirname);
-                } catch (err) {
-                    vscode.window.showErrorMessage(`Could not read ${dirname}: ${err}`);
+                    // Check directory mtime to ensure cache freshness
+                    try {
+                        const dst = await fs.promises.stat(dirname);
+                        const mtime = (dst && typeof (dst.mtimeMs) === 'number') ? dst.mtimeMs : dst.mtime.getTime();
+                        if (cachedEntry.dirMtime === mtime) {
+                            const lines = cachedEntry.entries.map((e) => {
+                                const f = new FileItem(dirname, e.filename, e.isDirectory, e.isFile, e.username, e.groupname, e.size, e.month, e.day, e.hour, e.min, e.modeStr, e.selected);
+                                return f.line();
+                            });
+                            this._buffers = buffers.concat(lines);
+                            if (cachedEntry.entries.length > MAX_ENTRIES) {
+                                this._buffers.push(`(listing truncated to ${MAX_ENTRIES} entries)`);
+                            }
+                            return this._buffers;
+                        }
+                        // mtime differs -> fallthrough to rebuild cache
+                    } catch (e) {
+                        // if stat failed, ignore and rebuild
+                    }
+                } catch (e) {
+                    // If cache regeneration fails for any reason, fall through to rebuild.
                 }
-                    
+            }
+            // include '.' and '..' similar to previous behavior
+            let names = ['.', '..', ...entries];
+
+            let truncated = false;
+            if (names.length > MAX_ENTRIES) {
+                names = names.slice(0, MAX_ENTRIES);
+                truncated = true;
             }
 
-            this._buffers = [
-                `${dirname}:`, // header line - only show the path
-            ];
-            this._buffers = this._buffers.concat(files.map((f) => f.line()));
+            // Build a lightweight cached representation to avoid holding onto
+            // FileItem instances or long formatted strings between operations.
+            const lightEntries: Array<any> = [];
+            for (const filename of names) {
+                const p = path.join(dirname, filename);
+                try {
+                    const stat = await fs.promises.stat(p);
+                    const fi = FileItem.create(dirname, filename, stat);
+                    if (!fi) continue;
+                    // Store minimal fields needed to re-create a FileItem on demand
+                    lightEntries.push({
+                        filename: fi.fileName,
+                        isDirectory: (fi as any)._isDirectory,
+                        isFile: (fi as any)._isFile,
+                        username: (fi as any)._username,
+                        groupname: (fi as any)._groupname,
+                        size: (fi as any)._size,
+                        month: (fi as any)._month,
+                        day: (fi as any)._day,
+                        hour: (fi as any)._hour,
+                        min: (fi as any)._min,
+                        modeStr: (fi as any)._modeStr,
+                        selected: false
+                    });
+                } catch (err) {
+                    // skip entries we can't stat
+                }
+            }
 
-            resolve(this._buffers);
-        });
+            // Save to per-directory cache (LRU by insertion order). Capture directory mtime
+            // so future reads can validate freshness and avoid serving stale listings.
+            try {
+                let dirMtime: number | undefined = undefined;
+                try {
+                    const dst = await fs.promises.stat(dirname);
+                    dirMtime = (dst && typeof (dst.mtimeMs) === 'number') ? dst.mtimeMs : dst.mtime.getTime();
+                } catch (e) { /* ignore stat errors for cache mtime */ }
+                this._dirCache.set(dirname, { entries: lightEntries, dirMtime });
+                const MAX_CACHE_DIRS = 10;
+                while (this._dirCache.size > MAX_CACHE_DIRS) {
+                    // delete oldest entry (Map preserves insertion order)
+                    const k = this._dirCache.keys().next().value;
+                    this._dirCache.delete(k);
+                }
+            } catch (e) { /* ignore cache errors */ }
+
+            // Recreate formatted lines on demand from the lightweight entries.
+            const lines = lightEntries.map((e) => {
+                const f = new FileItem(dirname, e.filename, e.isDirectory, e.isFile, e.username, e.groupname, e.size, e.month, e.day, e.hour, e.min, e.modeStr, e.selected);
+                return f.line();
+            });
+
+            this._buffers = buffers.concat(lines);
+            if (truncated) {
+                this._buffers.push(`(listing truncated to ${MAX_ENTRIES} entries)`);
+            }
+            return this._buffers;
+        } catch (err) {
+            this._buffers = buffers;
+            return this._buffers;
+        }
     }
 
     private async closeOtherDiredEditors(exemptUri: vscode.Uri) {
@@ -589,27 +721,33 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
     }
 
-    private readDir(dirname: string): FileItem[] {
-        const files = [".", ".."].concat(fs.readdirSync(dirname));
-        return <FileItem[]>files.map((filename) => {
-            const p = path.join(dirname, filename);
-            try {
-                const stat = fs.statSync(p);
-                return FileItem.create(dirname, filename, stat);
-            } catch (err) {
-                vscode.window.showErrorMessage(`Could not get stat of ${p}: ${err}`);
-                return null;
+    private async readDir(dirname: string): Promise<FileItem[]> {
+        try {
+            const entries = await fs.promises.readdir(dirname);
+            const files = ['.', '..', ...entries];
+            const result: Array<FileItem> = [];
+            for (const filename of files) {
+                const p = path.join(dirname, filename);
+                try {
+                    const stat = await fs.promises.stat(p);
+                    const fi = FileItem.create(dirname, filename, stat);
+                    if (fi) result.push(fi);
+                } catch (err) {
+                    // skip entries we can't stat
+                }
             }
-        }).filter((fileItem) => {
-            if (fileItem) {
-                if (this._show_dot_files) return true;
-                let filename = fileItem.fileName;
-                if (filename == '..' || filename == '.') return true;
-                return filename.substring(0, 1) != '.';
-            } else {
+            return result.filter((fileItem) => {
+                if (fileItem) {
+                    if (this._show_dot_files) return true;
+                    const filename = fileItem.fileName;
+                    if (filename === '..' || filename === '.') return true;
+                    return filename.substring(0, 1) !== '.';
+                }
                 return false;
-            }
-        });
+            }) as FileItem[];
+        } catch (err) {
+            return [];
+        }
     }
 
     private getFile(): FileItem | null {

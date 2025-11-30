@@ -12,7 +12,8 @@ export function defaultFinishCondition(self: vscode.QuickPick<vscode.QuickPickIt
 
 export async function autocompletedInputBox<T>(
     arg: {
-        completion: (userinput: string) => Iterable<vscode.QuickPickItem>,
+        // Completion may be synchronous or return a Promise resolving to an iterable
+        completion: (userinput: string) => Iterable<vscode.QuickPickItem> | Promise<Iterable<vscode.QuickPickItem>>,
         withSelf?: undefined | ((self: vscode.QuickPick<vscode.QuickPickItem>) => any),
         stopWhen?: undefined | ((self: vscode.QuickPick<vscode.QuickPickItem>) => boolean)
     }) {
@@ -34,7 +35,18 @@ export async function autocompletedInputBox<T>(
     let makeTask = () => new Promise<void>(resolve => {
         disposables.push(
             quickPick.onDidChangeValue(directoryOrFile => {
-                quickPick.items = Array.from(completionFunc(quickPick.value))
+                try {
+                    const r = completionFunc(quickPick.value);
+                    if (r && typeof (r as any).then === 'function') {
+                        (r as Promise<Iterable<vscode.QuickPickItem>>).then(items => {
+                            try { quickPick.items = Array.from(items); } catch (e) { /* ignore */ }
+                        }).catch(() => { /* ignore */ });
+                    } else {
+                        quickPick.items = Array.from(r as Iterable<vscode.QuickPickItem>);
+                    }
+                } catch (e) {
+                    // ignore errors from completion
+                }
                 return 0;
             }),
             quickPick.onDidAccept(() => {

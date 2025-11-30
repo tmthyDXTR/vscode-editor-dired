@@ -1,6 +1,6 @@
 # Changelog
 
-## Version 0.1.1 - 2025-11-30
+## Version 0.1.2 - 2025-12-01
 
 - Added an "Open terminal in current Dired folder" command and keybinding
   - Command: `extension.dired.openTerminal`
@@ -38,6 +38,16 @@
 - Misc fixes and cleanups
   - Fixed variable redeclarations and other TypeScript issues during iterative edits.
   - Ensured `createFile` and `createDir` create items without opening them (create-file does not open the new file in editor).
+
+- Low-level performance & memory hardening
+  - Reused module-scoped `TextEncoder` / `TextDecoder` to avoid repeated allocations in hot paths.
+  - Moved recursive helpers (`copyRecursive` / `restoreRecursive`) to module scope to avoid recreating closures.
+  - Replaced blocking synchronous FS calls (`statSync`, `readdirSync`, `unlinkSync`, `rmSync`, etc.) with `fs.promises` in hot paths to prevent event-loop blocking and reduce peak memory.
+  - Debounced `FileSystemWatcher` events and visible-range refreshes to coalesce rapid filesystem/scroll events.
+  - Added a lightweight per-directory cache (minimal metadata) validated against directory `mtime`, with LRU eviction (default cap 10 directories), to reduce re-statting and allocations.
+  - Limited `DocumentLinkProvider` work to `dired.maxEntries` lines to avoid generating huge numbers of links for very large directories.
+  - Added `clearBuffers()` and ensured debounce timers and watcher resources are cleared on document close / provider dispose to free retained memory.
+  - Other micro-optimizations: avoided intermediate Buffer allocations in `readFile`/`writeFile`, and moved hot helpers out of per-call closures.
 
 ## Files added / modified (high level)
 

@@ -2,7 +2,7 @@
 	"name": "vscode-dired-local",
 	"displayName": "vscode-dired (local edit by supacoda)",
 	"description": "dired(File Manager) for VSCode, like Emacs",
-	"version": "0.1.1-local",
+	"version": "0.1.2-local",
 	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
