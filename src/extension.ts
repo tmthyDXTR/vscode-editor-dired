@@ -25,8 +25,11 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
 
     const provider = new DiredProvider(fixed_window);
 
+    // Register the Dired provider as a FileSystemProvider so dired:// documents are editable.
+    // This lets users edit filenames inline and save (writeFile) will be invoked.
     const providerRegistrations = vscode.Disposable.from(
-        vscode.workspace.registerTextDocumentContentProvider(DiredProvider.scheme, provider),
+        // Cast to `any` to satisfy the TS signature while keeping the class in one place.
+        vscode.workspace.registerFileSystemProvider(DiredProvider.scheme, provider as any, { isCaseSensitive: true }),
     );
     const commandOpen = vscode.commands.registerCommand("extension.dired.open", () => {
         let dir = vscode.workspace.rootPath;
@@ -81,20 +84,20 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
     const commandRename = vscode.commands.registerCommand("extension.dired.rename", () => {
         vscode.window.showInputBox()
             .then((newName: string) => {
-                provider.rename(newName);
+                provider.renameSelected(newName);
             });
     });
     const commandCopy = vscode.commands.registerCommand("extension.dired.copy", () => {
         vscode.window.showInputBox()
             .then((newName: string) => {
-                provider.copy(newName);
+                provider.copySelected(newName);
             });
     });
 
     const commandDelete = vscode.commands.registerCommand("extension.dired.delete", () => {
         vscode.window.showInformationMessage("Delete this file ?", {modal: true}, "Yes", "No").then(item => {
                 if (item == "Yes") {
-                    provider.delete();
+                    provider.deleteSelected();
                 }
             });
     });

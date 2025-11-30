@@ -13,6 +13,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     static scheme = 'dired'; // ex: dired://<directory>
 
     private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+    // Emit file change events for FileSystemProvider API
+    private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     private _fixed_window: boolean;
     private _show_dot_files: boolean = true;
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
@@ -32,6 +34,11 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
 
     get onDidChange() {
         return this._onDidChange.event;
+    }
+
+    // FileSystemProvider event
+    get onDidChangeFile() {
+        return this._onDidChangeFile.event;
     }
 
     get dirname() {
@@ -86,6 +93,106 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             .then(() => this._onDidChange.fire(this.uri));
     }
 
+    // --- Minimal FileSystemProvider implementations so dired:// documents become editable ---
+    // These are deliberately minimal: enough for VS Code to treat the `dired` scheme as writable
+    // and to let us detect and apply filename changes when the buffer is saved.
+
+    // Watch notifications - not fully implemented (no-op watcher)
+    watch(_resource: vscode.Uri, _opts: { recursive: boolean; excludes: string[]; }): vscode.Disposable {
+        // Not implementing fine-grained watching for now
+        return new vscode.Disposable(() => { });
+    }
+
+    // Return file stat for the dired virtual file (we report it as a file)
+    stat(resource: vscode.Uri): vscode.FileStat {
+        return {
+            type: vscode.FileType.File,
+            ctime: Date.now(),
+            mtime: Date.now(),
+            size: this._buffers ? Buffer.from(this._buffers.join('\n')).length : 0
+        };
+    }
+
+    // readDirectory is not used by the extension but implement a safe default
+    readDirectory(_uri: vscode.Uri): [string, vscode.FileType][] {
+        return [];
+    }
+
+    // When opening a dired://<dir> document, VS Code calls readFile. Return the rendered listing.
+    async readFile(uri: vscode.Uri): Promise<Uint8Array> {
+        const dir = uri.fsPath;
+        await this.createBuffer(dir);
+        const content = this._buffers.join('\n');
+        return Buffer.from(content, 'utf8');
+    }
+
+    // When the user saves the dired buffer, VS Code will call writeFile with the new content.
+    // We compare the new contents against the current directory listing and apply renames
+    // for lines whose filename column (from col 52) changed.
+    async writeFile(uri: vscode.Uri, content: Uint8Array, _options: { create: boolean; overwrite: boolean }): Promise<void> {
+        const dir = uri.fsPath;
+        // Ensure current buffer reflects actual FS state before compare
+        await this.createBuffer(dir);
+        const oldLines = this._buffers.slice();
+        const newText = Buffer.from(content).toString('utf8');
+        const newLines = newText.split(/\r?\n/);
+
+        // Align lengths by padding with empty strings if needed
+        const maxLines = Math.max(oldLines.length, newLines.length);
+        for (let i = 0; i < maxLines; i++) {
+            const oldLine = oldLines[i] || '';
+            const newLine = newLines[i] || '';
+            // Only consider data lines (skip header line 0)
+            if (i === 0) continue;
+            if (!oldLine && !newLine) continue;
+
+            // Extract filename portion (column 52 onwards) using same logic as FileItem.parseLine
+            const oldName = (oldLine.length >= 52) ? oldLine.substring(52) : '';
+            const newName = (newLine.length >= 52) ? newLine.substring(52) : '';
+
+            if (oldName && newName && oldName !== newName) {
+                const oldPath = path.join(dir, oldName);
+                const newPath = path.join(dir, newName);
+                try {
+                    // Perform rename on filesystem
+                    await fs.promises.rename(oldPath, newPath);
+                    vscode.window.showInformationMessage(`${oldName} -> ${newName}`);
+                } catch (err) {
+                    vscode.window.showErrorMessage(`Failed to rename ${oldName} -> ${newName}: ${err}`);
+                }
+            }
+        }
+
+        // Rebuild buffer from FS and notify content changed
+        await this.createBuffer(dir);
+        this._onDidChange.fire(uri);
+        // Emit file change events for consumers
+        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+    }
+
+    // createDirectory - forwards to fs
+    async createDirectory(uri: vscode.Uri): Promise<void> {
+        await fs.promises.mkdir(uri.fsPath, { recursive: true });
+    }
+
+    // delete - support deleting a dired virtual file (not used by UI)
+    async delete(uri: vscode.Uri, options: { recursive: boolean }): Promise<void> {
+        if (options.recursive) {
+            await fs.promises.rm(uri.fsPath, { recursive: true, force: true });
+        } else {
+            await fs.promises.unlink(uri.fsPath);
+        }
+    }
+
+    // rename - forward to fs and notify
+    async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
+        if (options.overwrite) {
+            try { await fs.promises.unlink(newUri.fsPath); } catch { /* ignore */ }
+        }
+        await fs.promises.rename(oldUri.fsPath, newUri.fsPath);
+        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: newUri }]);
+    }
+
     async createDir(dirname: string) {
         if (this.dirname) {
             const p = path.join(this.dirname, dirname);
@@ -102,7 +209,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         this.reload();
     }
 
-    rename(newName: string) {
+    renameSelected(newName: string) {
         const f = this.getFile();
         if (!f) {
             return;
@@ -114,7 +221,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
     }
 
-    copy(newName: string) {
+    copySelected(newName: string) {
         const f = this.getFile();
         if (!f) {
             return;
@@ -124,8 +231,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             vscode.window.showInformationMessage(`${f.fileName} is copied to ${n}`);
         }
     }
-
-    delete() {
+    deleteSelected() {
         const f = this.getFile();
         if (!f) {
             return;
