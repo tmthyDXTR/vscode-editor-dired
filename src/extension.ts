@@ -6,6 +6,7 @@ import FileItem from './fileItem';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { autocompletedInputBox } from './autocompletedInputBox';
 
 export interface ExtensionInternal {
@@ -24,6 +25,34 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
     }
 
     const provider = new DiredProvider(fixed_window);
+
+    // Persistent status bar item for last action with undo
+    const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusItem.command = 'extension.dired.undoLastAction';
+    context.subscriptions.push(statusItem);
+
+    // Last action state (persist across reloads in workspaceState)
+    type LastAction = { type: 'delete'|'create', path: string, backup?: string, isDirectory?: boolean } | null;
+    let lastAction: LastAction = context.workspaceState.get('dired.lastAction') || null;
+    function setLastAction(action: LastAction) {
+        lastAction = action;
+        context.workspaceState.update('dired.lastAction', action);
+        if (action) {
+            if (action.type === 'delete') {
+                statusItem.text = `$(trash) Deleted ${path.basename(action.path)} — Undo`;
+                statusItem.tooltip = `Restore ${action.path}`;
+                statusItem.show();
+            } else if (action.type === 'create') {
+                statusItem.text = `$(plus) Created ${path.basename(action.path)} — Undo`;
+                statusItem.tooltip = `Remove ${action.path}`;
+                statusItem.show();
+            }
+        } else {
+            statusItem.hide();
+        }
+    }
+    // Initialize status bar from persisted state
+    setLastAction(lastAction);
 
     // Register the Dired provider as a FileSystemProvider so dired:// documents are editable.
     // This lets users edit filenames inline and save (writeFile) will be invoked.
@@ -79,7 +108,48 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         if (!dirName) {
             return;
         }
-        await provider.createDir(dirName);
+        // create and set lastAction so undo is possible
+        const cwd = provider.dirname;
+        if (!cwd) {
+            vscode.window.setStatusBarMessage('Cannot determine current directory to create directory in.', 5000);
+            return;
+        }
+        const p = path.join(cwd, dirName);
+        try {
+            await provider.createDir(dirName);
+            // record create action
+            await context.workspaceState.update('dired.lastAction', { type: 'create', path: p });
+            setTimeout(() => { /* refresh already done by provider.createDir */ }, 0);
+            vscode.window.setStatusBarMessage(`Created ${p} (undo available)`, 3000);
+            // update status item
+            // reuse setLastAction by fetching the function via closure: recreate by explicitly calling
+            // But setLastAction not accessible here; instead reuse workspaceState and show statusItem
+            // We'll set status text directly
+            try { statusItem.text = `$(plus) Created ${path.basename(p)} — Undo`; statusItem.tooltip = `Remove ${p}`; statusItem.show(); } catch {}
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to create directory ${p}: ${err}`, 5000);
+        }
+    });
+    const commandOpenTerminal = vscode.commands.registerCommand("extension.dired.openTerminal", async () => {
+        try {
+            const selectedCandidate = provider.getSelectedPath();
+            const fallback = provider.dirname || os.homedir();
+            let selected: string = selectedCandidate ? selectedCandidate : fallback;
+            let cwd: string = selected;
+            try {
+                const stat = fs.statSync(selected);
+                if (stat.isFile()) cwd = path.dirname(selected);
+            } catch (e) { cwd = fallback; }
+            try {
+                const term = vscode.window.createTerminal({ cwd: cwd as any, name: `dired: ${path.basename(cwd)}`, location: { viewColumn: vscode.ViewColumn.Active } as any } as any);
+                term.show(true);
+            } catch (e) {
+                const fallbackTerm = vscode.window.createTerminal({ cwd: cwd, name: `dired: ${path.basename(cwd)}` });
+                fallbackTerm.show();
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to open terminal: ${err}`, 5000);
+        }
     });
     const commandRename = vscode.commands.registerCommand("extension.dired.rename", () => {
         vscode.window.showInputBox()
@@ -94,17 +164,72 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             });
     });
 
-    const commandDelete = vscode.commands.registerCommand("extension.dired.delete", () => {
-        vscode.window.showInformationMessage("Delete this file ?", {modal: true}, "Yes", "No").then(item => {
-                if (item == "Yes") {
-                    provider.deleteSelected();
+    const commandDelete = vscode.commands.registerCommand("extension.dired.delete", async () => {
+        const item = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: "Delete this file?" });
+        if (item !== "Yes") return;
+
+        // Determine selected path
+        const selected = provider.getSelectedPath();
+        const cwd = provider.dirname;
+        if (!selected || !cwd) {
+            vscode.window.setStatusBarMessage('No file selected to delete', 3000);
+            return;
+        }
+        // Prevent deleting the header directory itself
+        if (path.resolve(cwd) === path.resolve(selected)) {
+            vscode.window.setStatusBarMessage('Cannot delete the directory header', 3000);
+            return;
+        }
+
+        try {
+            const stat = fs.statSync(selected);
+            const isDir = stat.isDirectory();
+            // Create a backup copy to allow undo
+            const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
+            await fs.promises.mkdir(backupRoot, { recursive: true });
+            const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
+            const backupPath = path.join(backupRoot, backupName);
+            // Copy recursively to backup
+            async function copyRecursive(src: string, dest: string) {
+                const sstat = await fs.promises.stat(src);
+                if (sstat.isDirectory()) {
+                    await fs.promises.mkdir(dest, { recursive: true });
+                    for (const name of await fs.promises.readdir(src)) {
+                        await copyRecursive(path.join(src, name), path.join(dest, name));
+                    }
+                } else {
+                    await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+                    await fs.promises.copyFile(src, dest);
                 }
-            });
+            }
+            await copyRecursive(selected, backupPath);
+
+            // Move original to OS Trash
+            try {
+                await vscode.workspace.fs.delete(vscode.Uri.file(selected), { useTrash: true });
+            } catch (e) {
+                // Fallback to fs rm if workspace API fails
+                if (isDir) {
+                    try { fs.rmSync(selected, { recursive: true, force: true }); } catch { fs.rmdirSync(selected, { recursive: true }); }
+                } else {
+                    fs.unlinkSync(selected);
+                }
+            }
+
+            // Remember last action for undo
+            setLastAction({ type: 'delete', path: selected, backup: backupPath, isDirectory: isDir });
+            // Notify provider to refresh that directory listing directly (avoids relying on this.dirname)
+            try { await provider.notifyDirChanged(path.dirname(selected)); } catch {}
+            vscode.window.setStatusBarMessage(`${selected} moved to Trash (undo available)`, 5000);
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to delete ${selected}: ${err}`, 5000);
+        }
     });
 
     const commandGoUpDir = vscode.commands.registerCommand("extension.dired.goUpDir", () => {
         provider.goUpDir();
     });
+
     const commandRefresh = vscode.commands.registerCommand("extension.dired.refresh", () => {
         provider.reload();
     });
@@ -116,32 +241,6 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
     });
     const commandClose = vscode.commands.registerCommand("extension.dired.close", () => {
         vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-    });
-
-    const commandCopyPath = vscode.commands.registerCommand("extension.dired.copyPath", async () => {
-        const p = provider.getSelectedPath();
-        if (!p) {
-            vscode.window.showInformationMessage("No file or folder selected to copy path.");
-            return;
-        }
-        try {
-            // Normalize the path to resolve '.' references
-            const normalized = path.resolve(p);
-            await vscode.env.clipboard.writeText(normalized);
-            try {
-                const stat = fs.statSync(normalized);
-                if (stat.isDirectory()) {
-                    vscode.window.showInformationMessage(`Copied folder path: ${normalized}`);
-                } else {
-                    vscode.window.showInformationMessage(`Copied file path: ${normalized}`);
-                }
-            } catch (e) {
-                // If stat fails, default message
-                vscode.window.showInformationMessage(`Copied path: ${normalized}`);
-            }
-        } catch (err) {
-            vscode.window.showErrorMessage(`Failed to copy path: ${err}`);
-        }
     });
 
     const commandCreateFile = vscode.commands.registerCommand("extension.dired.createFile", async () => {
@@ -210,7 +309,8 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
                 completion: completionFunc,
                 withSelf: processSelf,
             });
-        vscode.window.showInformationMessage(fileName);
+        // Show chosen filename in the status bar rather than popup
+        if (fileName) vscode.window.setStatusBarMessage(`${fileName}`, 3000);
         let isDirectory = false;
 
         try {
@@ -228,8 +328,37 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         }
         else {
             await provider.createFile(fileName)
+            // record create action for undo
+            const cwd = provider.dirname;
+            const createdPath = path.isAbsolute(fileName) ? fileName : path.join(cwd || '', fileName);
+            await context.workspaceState.update('dired.lastAction', { type: 'create', path: createdPath });
+            try { statusItem.text = `$(plus) Created ${path.basename(createdPath)} — Undo`; statusItem.tooltip = `Remove ${createdPath}`; statusItem.show(); } catch {}
         }
 
+    });
+
+    const commandCopyPath = vscode.commands.registerCommand("extension.dired.copyPath", async () => {
+        const p = provider.getSelectedPath();
+        if (!p) {
+            vscode.window.setStatusBarMessage("No file or folder selected to copy path.", 3000);
+            return;
+        }
+        try {
+            const normalized = path.resolve(p);
+            await vscode.env.clipboard.writeText(normalized);
+            try {
+                const stat = fs.statSync(normalized);
+                if (stat.isDirectory()) {
+                    vscode.window.setStatusBarMessage(`Copied folder path: ${normalized}`, 3000);
+                } else {
+                    vscode.window.setStatusBarMessage(`Copied file path: ${normalized}`, 3000);
+                }
+            } catch (e) {
+                vscode.window.setStatusBarMessage(`Copied path: ${normalized}`, 3000);
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to copy path: ${err}`, 5000);
+        }
     });
 
     context.subscriptions.push(
@@ -238,6 +367,7 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         commandEnter,
         commandToggleDotFiles,
         commandCreateDir,
+        commandOpenTerminal,
         commandCreateFile,
         commandRename,
         commandCopy,
@@ -249,6 +379,85 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
         providerRegistrations
     );
     context.subscriptions.push(commandCopyPath);
+
+    // Make filenames clickable in the Dired buffer (Ctrl/Cmd+Click)
+    // Register a DocumentLinkProvider for the `dired` language that creates
+    // links for the filename column (column 52+) and targets either a file URI
+    // or a `dired:` directory URI so clicking opens the file or navigates the folder.
+    const linkProvider = vscode.languages.registerDocumentLinkProvider({ language: 'dired' }, {
+        provideDocumentLinks(document: vscode.TextDocument): vscode.DocumentLink[] {
+            const links: vscode.DocumentLink[] = [];
+            // Determine directory from header line (same logic as provider.dirname)
+            let header = document.lineAt(0).text || '';
+            header = header.replace(/:\s*$/, '');
+            header = header.replace(/^Dired:\s*/, '').trim();
+            const dir = header || undefined;
+
+            for (let i = 1; i < document.lineCount; i++) {
+                const line = document.lineAt(i).text;
+                if (!line || line.length <= 52) continue;
+                try {
+                    // Use existing parser to extract filename and build a FileItem
+                    const item = FileItem.parseLine(dir || '.', line);
+                    const fname = item.fileName;
+                    if (!fname) continue;
+                    const startPos = new vscode.Position(i, 52);
+                    const endPos = new vscode.Position(i, 52 + fname.length);
+                    const range = new vscode.Range(startPos, endPos);
+                    const target = item.uri; // for directories this yields dired: URI, for files a file: URI
+                    if (target) {
+                        links.push(new vscode.DocumentLink(range, target));
+                    }
+                } catch (e) {
+                    // ignore parse errors for malformed lines
+                }
+            }
+            return links;
+        }
+    });
+    context.subscriptions.push(linkProvider);
+
+    const commandUndo = vscode.commands.registerCommand('extension.dired.undoLastAction', async () => {
+        const la: any = context.workspaceState.get('dired.lastAction') || null;
+        if (!la) {
+            vscode.window.setStatusBarMessage('No action to undo', 3000);
+            return;
+        }
+        try {
+            if (la.type === 'delete') {
+                // Restore from backup
+                async function restoreRecursive(src: string, dest: string) {
+                    const sstat = await fs.promises.stat(src);
+                    if (sstat.isDirectory()) {
+                        await fs.promises.mkdir(dest, { recursive: true });
+                        for (const name of await fs.promises.readdir(src)) {
+                            await restoreRecursive(path.join(src, name), path.join(dest, name));
+                        }
+                    } else {
+                        await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+                        await fs.promises.copyFile(src, dest);
+                    }
+                }
+                await restoreRecursive(la.backup, la.path);
+                await context.workspaceState.update('dired.lastAction', null);
+                try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
+                vscode.window.setStatusBarMessage(`Restored ${la.path}`, 5000);
+            } else if (la.type === 'create') {
+                // Undo create by moving to trash
+                try {
+                    await vscode.workspace.fs.delete(vscode.Uri.file(la.path), { useTrash: true });
+                } catch (e) {
+                    try { fs.unlinkSync(la.path); } catch {}
+                }
+                await context.workspaceState.update('dired.lastAction', null);
+                try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
+                vscode.window.setStatusBarMessage(`Removed ${la.path}`, 5000);
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Undo failed: ${err}`, 5000);
+        }
+    });
+    context.subscriptions.push(commandUndo);
 
     vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor && editor.document.uri.scheme === DiredProvider.scheme) {

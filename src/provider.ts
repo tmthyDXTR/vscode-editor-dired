@@ -59,9 +59,17 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         return dir;
     }
 
-    toggleDotFiles() {
+    async toggleDotFiles() {
         this._show_dot_files = !this._show_dot_files;
-        this.reload();
+        // If we can resolve the current directory, notify that directory changed so
+        // both the per-directory URI and the active Dired URI (fixed_window support)
+        // get refreshed. Fall back to reload() if dirname is not available.
+        const dir = this.dirname;
+        if (dir) {
+            await this.notifyDirChanged(dir);
+        } else {
+            this.reload();
+        }
     }
 
     enter() {
@@ -123,7 +131,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         const dir = uri.fsPath;
         await this.createBuffer(dir);
         const content = this._buffers.join('\n');
-        return Buffer.from(content, 'utf8');
+        // Return a Uint8Array. Buffer is a Uint8Array at runtime but some TS settings
+        // (lib/DOM/SharedArrayBuffer differences) can make the types incompatible.
+        // Use TextEncoder to produce a proper Uint8Array instead of relying on Buffer.
+        return new TextEncoder().encode(content);
     }
 
     // When the user saves the dired buffer, VS Code will call writeFile with the new content.
@@ -156,9 +167,9 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                 try {
                     // Perform rename on filesystem
                     await fs.promises.rename(oldPath, newPath);
-                    vscode.window.showInformationMessage(`${oldName} -> ${newName}`);
+                    vscode.window.setStatusBarMessage(`${oldName} -> ${newName}`, 3000);
                 } catch (err) {
-                    vscode.window.showErrorMessage(`Failed to rename ${oldName} -> ${newName}: ${err}`);
+                    vscode.window.setStatusBarMessage(`Failed to rename ${oldName} -> ${newName}: ${err}`, 5000);
                 }
             }
         }
@@ -194,19 +205,72 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     }
 
     async createDir(dirname: string) {
-        if (this.dirname) {
-            const p = path.join(this.dirname, dirname);
-            let uri = vscode.Uri.file(p);
-            await vscode.workspace.fs.createDirectory(uri);
-            this.reload();
+        const cwd = this.dirname;
+        if (!cwd) return;
+        const p = path.join(cwd, dirname);
+        const createdUri = vscode.Uri.file(p);
+        // Create directory and refresh listing for the captured cwd
+        try {
+            await vscode.workspace.fs.createDirectory(createdUri);
+        } catch (err) {
+            // Fallback to fs if workspace API fails for some reason
+            await fs.promises.mkdir(p, { recursive: true });
         }
+        // Rebuild buffer for cwd and notify change for that specific URI
+        await this.createBuffer(cwd);
+        const uri = this.createPathUriForDir(cwd);
+        this._onDidChange.fire(uri);
+        // Also emit a file-change event so consumers and any watchers update immediately
+        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+        // Also notify the active Dired URI (handles fixed_window mode where the editor uses FIXED_URI)
+        try {
+            const activeUri = this.uri;
+            if (activeUri && activeUri.toString() !== uri.toString()) {
+                this._onDidChange.fire(activeUri);
+                this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+            }
+        } catch (e) { /* ignore */ }
     }
 
     async createFile(filename: string) {
-        const uri = vscode.Uri.file(filename);
-        const document = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(document, { preview: false });
-        this.reload();
+        // Resolve filename against current dired directory if relative
+        const cwd = this.dirname;
+        let target = filename;
+        if (!path.isAbsolute(target)) {
+            if (!cwd) {
+                vscode.window.setStatusBarMessage('Cannot determine current directory to create file in.', 5000);
+                return;
+            }
+            target = path.join(cwd, target);
+        }
+
+        // Create parent directories and the file (if it doesn't exist), then refresh the listing for cwd
+        try {
+            await fs.promises.mkdir(path.dirname(target), { recursive: true });
+            try {
+                await fs.promises.access(target, fs.constants.F_OK);
+                // file exists - do nothing
+            } catch (e) {
+                await fs.promises.writeFile(target, "");
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to create file ${target}: ${err}`, 5000);
+            return;
+        }
+
+        const listDir = cwd || path.dirname(target);
+        await this.createBuffer(listDir);
+        const uri = this.createPathUriForDir(listDir);
+        this._onDidChange.fire(uri);
+        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+        // Also notify the active Dired URI to cover fixed_window mode
+        try {
+            const activeUri = this.uri;
+            if (activeUri && activeUri.toString() !== uri.toString()) {
+                this._onDidChange.fire(activeUri);
+                this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+            }
+        } catch (e) { /* ignore */ }
     }
 
     renameSelected(newName: string) {
@@ -217,7 +281,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (this.dirname) {
             const n = path.join(this.dirname, newName);
             this.reload();
-            vscode.window.showInformationMessage(`${f.fileName} is renamed to ${n}`);
+            vscode.window.setStatusBarMessage(`${f.fileName} is renamed to ${n}`, 3000);
         }
     }
 
@@ -228,7 +292,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
         if (this.dirname) {
             const n = path.join(this.dirname, newName);
-            vscode.window.showInformationMessage(`${f.fileName} is copied to ${n}`);
+            vscode.window.setStatusBarMessage(`${f.fileName} is copied to ${n}`, 3000);
         }
     }
     deleteSelected() {
@@ -236,11 +300,39 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (!f) {
             return;
         }
-        if (this.dirname) {
-            const n = path.join(this.dirname, f.fileName);
-            fs.unlinkSync(n);
-            this.reload();
-            vscode.window.showInformationMessage(`${n} was deleted`);
+        const cwd = this.dirname;
+        if (!cwd) {
+            return;
+        }
+        const target = path.join(cwd, f.fileName);
+        try {
+            const stat = fs.statSync(target);
+            if (stat.isDirectory()) {
+                try {
+                    fs.rmSync(target, { recursive: true, force: true });
+                } catch (e) {
+                    fs.rmdirSync(target, { recursive: true });
+                }
+            } else {
+                fs.unlinkSync(target);
+            }
+            // Refresh the specific directory buffer we modified
+            this.createBuffer(cwd).then(() => {
+                const uri = this.createPathUriForDir(cwd);
+                this._onDidChange.fire(uri);
+                this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+                // Also notify the active Dired URI to cover fixed_window mode
+                try {
+                    const activeUri = this.uri;
+                    if (activeUri && activeUri.toString() !== uri.toString()) {
+                        this._onDidChange.fire(activeUri);
+                        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+                    }
+                } catch (e) { /* ignore */ }
+            });
+            vscode.window.setStatusBarMessage(`${target} was deleted`, 3000);
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to delete ${target}: ${err}`, 5000);
         }
     }
 
@@ -524,5 +616,28 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             viewColumn: vscode.ViewColumn.Active
         };
         return opts;
+    }
+
+    // Public helper to notify that a specific directory's listing changed.
+    // This is used by external callers (commands) when they perform operations
+    // that modify the filesystem but can't rely on `this.dirname` being set.
+    public async notifyDirChanged(dir: string) {
+        if (!dir) return;
+        try {
+            await this.createBuffer(dir);
+            const uri = this.createPathUriForDir(dir);
+            this._onDidChange.fire(uri);
+            this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+            // also notify active dired uri (covers fixed_window mode)
+            try {
+                const activeUri = this.uri;
+                if (activeUri && activeUri.toString() !== uri.toString()) {
+                    this._onDidChange.fire(activeUri);
+                    this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+                }
+            } catch (e) { /* ignore */ }
+        } catch (e) {
+            // ignore
+        }
     }
 }

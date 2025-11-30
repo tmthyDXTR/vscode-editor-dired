@@ -17,7 +17,8 @@
 	},
 	"activationEvents": [
 		"onCommand:extension.dired.open",
-		"onCommand:extension.dired.copyPath"
+		"onCommand:extension.dired.copyPath",
+		"onCommand:extension.dired.openTerminal"
 	],
 	"categories": [
 		"Other"
@@ -34,13 +35,17 @@
 				"title": "Open dired buffer"
 			},
 			{
+				"command": "extension.dired.openTerminal",
+				"title": "Open terminal in current dired folder"
+			},
+			{
 				"command": "extension.dired.copyPath",
 				"title": "Copy path of selected file"
 			}
 		],
 		"keybindings": [
 			{
-				"key": ".",
+				"key": "ctrl+x .",
 				"command": "extension.dired.toggleDotFiles",
 				"when": "dired.open && editorTextFocus && !inDebugRepl"
 			},
@@ -49,6 +54,21 @@
 				"command": "extension.dired.open",
 				"when": "editorTextFocus && !inDebugRepl"
 			},
+			{
+				"key": "ctrl+x ctrl+n f",
+				"command": "extension.dired.createFile",
+				"when": "dired.open && editorTextFocus && !inDebugRepl"
+			},
+			{
+				"key": "ctrl+x ctrl+n d",
+				"command": "extension.dired.createDir",
+				"when": "dired.open && editorTextFocus && !inDebugRepl"
+			},
+            {
+                "key": "ctrl+x t",
+                "command": "extension.dired.openTerminal",
+                "when": "dired.open && editorTextFocus && !inDebugRepl"
+            },
 			{
 				"key": "ctrl+x ctrl+p",
 				"command": "extension.dired.copyPath",
