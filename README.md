@@ -45,7 +45,6 @@ Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 ```powershell
 npm run watch
 ```
-Start the debug session in VS Code (Launch Extension (watch)).
 
 - One-off compile:
 ```powershell
