@@ -19,6 +19,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _show_dot_files: boolean = true;
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
     private _show_path_in_tab: boolean = false;
+    private _watcher: vscode.FileSystemWatcher | null = null;
 
     constructor(fixed_window: boolean) {
         this._fixed_window = fixed_window;
@@ -30,6 +31,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
 
     dispose() {
         this._onDidChange.dispose();
+        try { if (this._watcher) { this._watcher.dispose(); this._watcher = null; } } catch (e) { }
     }
 
     get onDidChange() {
@@ -217,8 +219,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             await fs.promises.mkdir(p, { recursive: true });
         }
         // Rebuild buffer for cwd and notify change for that specific URI
-        await this.createBuffer(cwd);
-        const uri = this.createPathUriForDir(cwd);
+        await this.createBuffer(cwd as string);
+        const uri = this.createPathUriForDir(cwd as string);
         this._onDidChange.fire(uri);
         // Also emit a file-change event so consumers and any watchers update immediately
         this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
@@ -290,10 +292,48 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (!f) {
             return;
         }
-        if (this.dirname) {
-            const n = path.join(this.dirname, newName);
-            vscode.window.setStatusBarMessage(`${f.fileName} is copied to ${n}`, 3000);
+        if (!this.dirname) return;
+        if (!newName) return;
+        const src = path.join(this.dirname, f.fileName);
+        let dest = newName;
+        if (!path.isAbsolute(dest)) {
+            dest = path.join(this.dirname, dest);
         }
+
+        async function copyRecursive(srcPath: string, destPath: string) {
+            const sstat = await fs.promises.stat(srcPath);
+            if (sstat.isDirectory()) {
+                await fs.promises.mkdir(destPath, { recursive: true });
+                for (const name of await fs.promises.readdir(srcPath)) {
+                    await copyRecursive(path.join(srcPath, name), path.join(destPath, name));
+                }
+            } else {
+                await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+                await fs.promises.copyFile(srcPath, destPath);
+            }
+        }
+
+        const cwd = this.dirname;
+        (async () => {
+            try {
+            await copyRecursive(src, dest);
+            // Refresh the specific directory buffer we modified
+            await this.createBuffer(cwd as string);
+            const uri = this.createPathUriForDir(cwd as string);
+                this._onDidChange.fire(uri);
+                this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+                try {
+                    const activeUri = this.uri;
+                    if (activeUri && activeUri.toString() !== uri.toString()) {
+                        this._onDidChange.fire(activeUri);
+                        this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri: activeUri }]);
+                    }
+                } catch (e) { /* ignore */ }
+                vscode.window.setStatusBarMessage(`${src} copied to ${dest}`, 3000);
+            } catch (err) {
+                vscode.window.setStatusBarMessage(`Failed to copy ${src} -> ${dest}: ${err}`, 5000);
+            }
+        })();
     }
     deleteSelected() {
         const f = this.getFile();
@@ -317,8 +357,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                 fs.unlinkSync(target);
             }
             // Refresh the specific directory buffer we modified
-            this.createBuffer(cwd).then(() => {
-                const uri = this.createPathUriForDir(cwd);
+                this.createBuffer(cwd as string).then(() => {
+                const uri = this.createPathUriForDir(cwd as string);
                 this._onDidChange.fire(uri);
                 this._onDidChangeFile.fire([{ type: vscode.FileChangeType.Changed, uri }]);
                 // Also notify the active Dired URI to cover fixed_window mode
@@ -393,7 +433,36 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                         const exempt = this._show_path_in_tab ? editor.document.uri : FIXED_URI;
                         this.closeOtherDiredEditors(exempt);
                     }
+                    // Setup a FileSystemWatcher for this open directory so external changes
+                    // (create/delete/modify) cause the listing to refresh automatically.
+                    try {
+                        this.setupWatcher(dirPath);
+                    } catch (e) { /* ignore */ }
                 });
+        }
+    }
+
+    private setupWatcher(dir: string) {
+        // Dispose previous watcher if any
+        try {
+            if (this._watcher) {
+                this._watcher.dispose();
+                this._watcher = null;
+            }
+        } catch (e) { /* ignore */ }
+
+        try {
+            const pattern = new vscode.RelativePattern(dir, '**');
+            this._watcher = vscode.workspace.createFileSystemWatcher(pattern);
+            const onChange = async () => {
+                try { await this.notifyDirChanged(dir); } catch (e) { /* ignore */ }
+            };
+            this._watcher.onDidCreate(onChange);
+            this._watcher.onDidChange(onChange);
+            this._watcher.onDidDelete(onChange);
+        } catch (e) {
+            // ignore watcher failures (some environments may restrict watchers)
+            try { if (this._watcher) { this._watcher.dispose(); this._watcher = null; } } catch (ee) { }
         }
     }
 

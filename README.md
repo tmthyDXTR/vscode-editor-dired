@@ -21,16 +21,10 @@ Below are the default keybindings contributed by the extension (customizable in 
 - `ctrl+x ctrl+n d` — Create a new directory in the current Dired directory
 - `ctrl+x ctrl+p` — Copy path of the selected row (or current directory when on header)
 - `Enter` — Open file / enter directory
-- `shift+=` — Create directory (alternative key)
-- `ctrl+x =` — Create file (alternative key)
-- `shift+r` — Rename selected file
-- `shift+d` — Delete selected file(s) or folder(s)
-- `shift+c` — Copy selected file(s)
-- `shift+b` — Go to parent (up) directory
-- `m` — Mark/select current row
-- `u` — Unselect current row
-- `g` — Refresh directory listing
-- `q` — Close Dired
+- `ctrl+x shift+d` — Delete selected file(s) or folder(s)
+- `alt+w` — Copy selected file(s)/folder(s)
+- `ctrl+b` — Go to parent (up) directory
+- `ctrl+x r` — Refresh directory listing
 
 Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 

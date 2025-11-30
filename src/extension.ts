@@ -158,8 +158,19 @@ export function activate(context: vscode.ExtensionContext): ExtensionInternal {
             });
     });
     const commandCopy = vscode.commands.registerCommand("extension.dired.copy", () => {
-        vscode.window.showInputBox()
-            .then((newName: string) => {
+        // Ensure there's a selected file/folder in the active dired buffer before prompting
+        const selected = provider.getSelectedPath();
+        if (!selected) {
+            vscode.window.setStatusBarMessage('No file or folder selected to copy', 3000);
+            return;
+        }
+        // Suggest a sensible default destination: same directory with "-copy" suffix
+        const cwd = provider.dirname || path.dirname(selected);
+        const basename = path.basename(selected);
+        const defaultDest = path.join(cwd, basename + '-copy');
+        vscode.window.showInputBox({ prompt: 'Copy to (absolute or relative path)', value: defaultDest })
+            .then((newName: string | undefined) => {
+                if (!newName) return;
                 provider.copySelected(newName);
             });
     });
