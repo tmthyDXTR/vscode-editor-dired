@@ -42,6 +42,7 @@ Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 
 ## Development
 - Watch & debug (recommended):
+ 
 ```powershell
 npm run watch
 ```
