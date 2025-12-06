@@ -136,7 +136,7 @@ export function activate(context: vscode.ExtensionContext) {
     
 
     const commandCreateDir = vscode.commands.registerCommand("extension.dired.createDir", async () => {
-        let dirName = await vscode.window.showInputBox({ prompt: "Directory name" });
+        const dirName = await vscode.window.showInputBox({ prompt: "Directory name" });
         if (!dirName) {
             return;
         }
@@ -167,7 +167,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             const selectedCandidate = provider.getSelectedPath();
             const fallback = provider.dirname || os.homedir();
-            let selected: string = selectedCandidate ? selectedCandidate : fallback;
+            const selected: string = selectedCandidate ? selectedCandidate : fallback;
             let cwd: string = selected;
             try {
                 const stat = await fs.promises.stat(selected);
@@ -333,7 +333,7 @@ export function activate(context: vscode.ExtensionContext) {
         function processSelf(self: vscode.QuickPick<vscode.QuickPickItem>) {
             self.placeholder = "Create File or Open"
         }
-        let fileName = await autocompletedInputBox(
+        const fileName = await autocompletedInputBox(
             {
                 completion: completionFunc,
                 withSelf: processSelf,
@@ -343,7 +343,7 @@ export function activate(context: vscode.ExtensionContext) {
         let isDirectory = false;
 
         try {
-            let stat = await fs.promises.stat(fileName);
+            const stat = await fs.promises.stat(fileName);
             if (stat.isDirectory())
                 isDirectory = true;
         }
@@ -434,6 +434,42 @@ export function activate(context: vscode.ExtensionContext) {
         providerRegistrations
     );
     context.subscriptions.push(commandCopyPath);
+
+    // Find in folder: open search view scoped to selected folder or current provider dirname
+    const commandFindInFolder = vscode.commands.registerCommand("extension.dired.findInFolder", async () => {
+        try {
+            const selected = provider.getSelectedPath();
+            let dir = provider.dirname || undefined;
+            if (selected) {
+                try {
+                    const st = await fs.promises.stat(selected);
+                    if (st.isDirectory()) {
+                        dir = selected;
+                    } else {
+                        dir = path.dirname(selected);
+                    }
+                } catch (e) {
+                    // fallback to provider dirname
+                    dir = provider.dirname || dir;
+                }
+            }
+            if (!dir) {
+                vscode.window.setStatusBarMessage('Dired: No folder selected to search in', 3000);
+                return;
+            }
+            // Use recursive glob pattern and normalize slashes to forward for cross-platform support
+            const includePattern = (path.join(dir, '**')).replace(/\\/g, '/');
+            await vscode.commands.executeCommand('workbench.action.findInFiles', {
+                query: '',
+                filesToInclude: includePattern,
+                triggerSearch: false
+            } as any);
+            vscode.window.setStatusBarMessage(`Dired: Searching in ${dir}`, 1500);
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Dired search failed: ${err}`, 5000);
+        }
+    });
+    context.subscriptions.push(commandFindInFolder);
 
     // Make filenames clickable in the Dired buffer (Ctrl/Cmd+Click)
     // Register a DocumentLinkProvider for the `dired` language that creates

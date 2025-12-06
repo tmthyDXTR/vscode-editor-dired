@@ -27,12 +27,12 @@ export async function autocompletedInputBox<T>(
 
     const quickPick = vscode.window.createQuickPick();
     quickPick.canSelectMany = false;
-    let disposables: vscode.Disposable[] = [];
+    const disposables: vscode.Disposable[] = [];
     let result = quickPick.value;
     if (processSelf !== undefined)
         processSelf(quickPick);
 
-    let makeTask = () => new Promise<void>(resolve => {
+    const makeTask = () => new Promise<void>(resolve => {
         disposables.push(
             quickPick.onDidChangeValue(directoryOrFile => {
                 try {

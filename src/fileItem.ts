@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 
-var Mode = require('stat-mode');
+const Mode = require('stat-mode');
 import DiredProvider from './provider';
 import { IDResolver } from './idResolver';
 import { URL, pathToFileURL } from 'url';
@@ -36,7 +36,7 @@ export default class FileItem {
         const mode = new Mode(stats);
         const os = require('os');
             let username = FileItem._resolver.username(stats.uid) || undefined;
-            let groupname = FileItem._resolver.groupname(stats.gid) || undefined;
+            const groupname = FileItem._resolver.groupname(stats.gid) || undefined;
             // On Windows, stats.uid/gid may be unavailable; fall back to the current
             // user's name (so the listing is not empty).
             if ((!username || username.trim().length === 0) && process.platform === 'win32') {
@@ -119,7 +119,7 @@ export default class FileItem {
 
     // Pad a string to a required width
     public padStr(s: string, size: number, p: string): string {
-        var str = s + "";
+        let str = s + "";
         while (str.length < size) str = p + str;
         return str;
     }
@@ -152,7 +152,7 @@ export default class FileItem {
         const normalize = (s: string | undefined) => {
             if (!s) return undefined;
             const t = s.trim().toLowerCase();
-            if (t === 'undefined' || t === 'null') return undefined;
+            if (t === 'undefined' || t === 'null' || t === '-') return undefined;
             return s;
         }
         const username = normalize(m[3]);
@@ -218,7 +218,7 @@ export default class FileItem {
     }
 
     pad(num:number, size:number, p: string): string {
-        var s = num+"";
+        let s = num+"";
         while (s.length < size) s = p + s;
         return s;
     }

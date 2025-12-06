@@ -34,6 +34,7 @@
 		"onCommand:extension.dired.copyName",
 		"onCommand:extension.dired.undoLastAction",
 		"onCommand:extension.dired.toggleMetaFiles",
+		"onCommand:extension.dired.findInFolder",
 		"onLanguage:dired"
 	],
 	"categories": [
@@ -117,6 +118,10 @@
 			{
 				"command": "extension.dired.toggleMetaFiles",
 				"title": "Dired: Toggle .meta files (show/hide .meta files)"
+			},
+			{
+				"command": "extension.dired.findInFolder",
+				"title": "Dired: Find in folder"
 			}
 		],
 		"keybindings": [
@@ -173,12 +178,17 @@
 			{
 				"key": "ctrl+b",
 				"command": "extension.dired.goUpDir",
-				"when": "dired.open &&  editorTextFocus && !findWidgetVisible && !inQuickOpen"
+				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
 			},
 			{
 				"key": "ctrl+x r",
 				"command": "extension.dired.refresh",
-				"when": "dired.open &&  editorTextFocus && !findWidgetVisible && !inQuickOpen"
+				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "ctrl+x f",
+				"command": "extension.dired.findInFolder",
+				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
 			}
 		],
 		"languages": [

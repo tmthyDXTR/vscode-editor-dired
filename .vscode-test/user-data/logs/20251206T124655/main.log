@@ -1,0 +1,5 @@
+2025-12-06 12:46:55.444 [error] Error: Error mutex already exists
+    at Tu.S (file:///C:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/main.js:128:18405)
+2025-12-06 12:46:55.444 [info] update#setState disabled
+2025-12-06 12:46:55.444 [info] update#ctor - updates are disabled by the environment
+2025-12-06 12:46:56.656 [info] Extension host with pid 24636 exited with code: 0, signal: unknown.

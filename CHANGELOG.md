@@ -27,6 +27,20 @@
   - Add: Unit tests
     - Tests cover size formatting, format/parse round-trips, start-column behavior from `create()` and `parseLine()`, and `IDResolver` cache sanitation.
 
+  - Add: Find in folder (search) command
+    - Command: `extension.dired.findInFolder` — opens VS Code's Find in Files view scoped to the selected dired folder or the parent of the selected file, with a recursive include pattern (`<folder>/**`). The command leaves the search query blank and does not auto-trigger the search by default.
+    - Added a unit test to assert the command executes without throwing when the extension is active.
+
+  - Fix: Test harness and runner
+    - Fixed `test/runTest` to ensure `extensionDevelopmentPath` points at the project root (two levels above `out/test`) so the extension loads correctly during tests.
+    - `test/index.ts` now includes a fallback runner that uses Mocha directly when `vscode/lib/testrunner` is not available, and exports the `run` shape compatible with `@vscode/test-electron`.
+
+  - Add: ESLint config for repo and pragmatic rule relaxations
+    - Added `.eslintrc.json` and relaxed a few rules to avoid blocking test execution (e.g., allowed empty catches, switched off `@typescript-eslint/no-var-requires` temporarily). Consider tightening rules in a follow-up.
+
+  - Fix: parseLine normalization for missing user/group
+    - `FileItem.parseLine()` now treats `'-'` (the placeholder), `'undefined'`, and `'null'` as missing values and returns `undefined` for `_username` / `_groupname` instead of the literal `'-'` string. This fixes tests and avoids showing `undefined` in listings.
+
   - Misc
     - Additional minor refactors and defensive checks to make the provider robust across platforms and formatting changes.
 

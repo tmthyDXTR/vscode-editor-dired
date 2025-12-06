@@ -35,11 +35,11 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     // Emit file change events for FileSystemProvider API
     private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     private _fixed_window: boolean;
-    private _show_dot_files: boolean = true;
+    private _show_dot_files = true;
     // Toggle display of `.meta` files (e.g., Unity .meta files)
-    private _show_meta_files: boolean = true;
+    private _show_meta_files = true;
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
-    private _show_path_in_tab: boolean = false;
+    private _show_path_in_tab = false;
     private _watcher: vscode.FileSystemWatcher | null = null;
     // Lightweight per-directory cache to store minimal file metadata and avoid
     // retaining heavy FileItem or formatted-line objects between operations.

@@ -1,0 +1,66 @@
+2025-12-06 12:49:07.706 [info] ChatSessionStore: Migrating 0 chat sessions from storage service to file system
+2025-12-06 12:49:07.802 [info] Started local extension host with pid 27092.
+2025-12-06 12:49:07.809 [error] Error: Unable to read file 'c:\Users\Micha\extensions-local\vscode-dired\out\src\package.json' (Error: Unable to resolve nonexistent file 'c:\Users\Micha\extensions-local\vscode-dired\out\src\package.json')
+    at Kkt.G (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65903)
+    at Kkt.F (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65728)
+    at async Kkt.C (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65095)
+    at async uPe.t (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:23699)
+    at async uPe.scanExtension (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:22201)
+    at async Promise.all (index 0)
+    at async uPe.q (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:20624)
+    at async uPe.scanOneOrMultipleExtensions (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:22028)
+    at async vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:13883
+    at async Promise.all (index 0)
+2025-12-06 12:49:07.817 [error] Error: Unable to read file 'c:\Users\Micha\extensions-local\vscode-dired\out\test\package.json' (Error: Unable to resolve nonexistent file 'c:\Users\Micha\extensions-local\vscode-dired\out\test\package.json')
+    at Kkt.G (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65903)
+    at Kkt.F (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65728)
+    at async Kkt.C (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3828:65095)
+    at async uPe.t (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:23699)
+    at async uPe.scanExtension (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:22201)
+    at async Promise.all (index 1)
+    at async uPe.q (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:20624)
+    at async uPe.scanOneOrMultipleExtensions (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:22028)
+    at async vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:3838:13883
+    at async Promise.all (index 0)
+2025-12-06 12:49:08.013 [info] MCP Registry configured: https://api.mcp.github.com
+2025-12-06 12:49:08.060 [info] Settings Sync: Account status changed from uninitialized to unavailable
+2025-12-06 12:49:08.482 [info] [0m%s%s[0m  
+2025-12-06 12:49:08.483 [info] [0m%s%s[0m    Extension Tests
+2025-12-06 12:49:08.507 [info]   [32m  ✔[0m[90m %s[0m Something 1
+2025-12-06 12:49:08.508 [info]   [32m  ✔[0m[90m %s[0m Format and parse size
+2025-12-06 12:49:08.509 [info] DEBUG: Do not print undefined - line:   -rw-r--r-- - -      123 Dec 01 12:00 myfile2.txt
+2025-12-06 12:49:08.509 [info] DEBUG: doIncludesUndefined= false
+2025-12-06 12:49:08.509 [info] DEBUG: f._username= undefined f._groupname= undefined
+2025-12-06 12:49:08.510 [info]   [31m  %d) %s[0m 1 Do not print 'undefined' username/group
+2025-12-06 12:49:08.514 [info]   [32m  ✔[0m[90m %s[0m IDResolver sanitizes cache and ignores undefined values
+2025-12-06 12:49:08.515 [info]   [32m  ✔[0m[90m %s[0m Windows fallback username when resolver returns undefined
+2025-12-06 12:49:08.515 [info]   [32m  ✔[0m[90m %s[0m Parsed start column matches actual column
+2025-12-06 12:49:08.517 [info]   [32m  ✔[0m[90m %s[0m FileItem.create sets startColumn
+2025-12-06 12:49:08.517 [info]   [32m  ✔[0m[90m %s[0m parseLine for created lines returns same startColumn
+2025-12-06 12:49:08.518 [info]   [32m  ✔[0m[90m %s[0m startColumn after time token
+2025-12-06 12:49:08.518 [info]   [32m  ✔[0m[90m %s[0m DocumentLink start column equals computed lastIndexOf
+2025-12-06 12:49:08.522 [info] DEBUG: registered dired commands:  []
+2025-12-06 12:49:08.522 [info]   [31m  %d) %s[0m 2 Find in folder command executes without throwing
+2025-12-06 12:49:08.523 [info] [92m [0m[32m %d passing[0m[90m (%s)[0m 9 42ms
+2025-12-06 12:49:08.523 [info] [31m  %d failing[0m 2
+2025-12-06 12:49:08.524 [info] [0m  %s) %s:
+%s[0m[90m
+%s
+[0m 1 Extension Tests
+       Do not print 'undefined' username/group 
+      [31mAssertionError [ERR_ASSERTION]: false == true[0m
+      [32m+ expected[0m [31m- actual[0m
+
+      [31m-false[0m
+      [32m+true[0m
+         	at Context.<anonymous> (C:\Users\Micha\extensions-local\vscode-dired\out\test\extension.test.js:49:16)
+  	at process.processImmediate (node:internal/timers:485:21)
+2025-12-06 12:49:08.524 [info] [0m  %s) %s:
+[0m[31m     %s[0m[90m
+%s
+[0m 2 Extension Tests
+       Find in folder command executes without throwing Error: command 'extension.dired.findInFolder' not found       at VYe.n (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:1338:3892)
+      at VYe.executeCommand (vscode-file://vscode-app/c:/Users/Micha/AppData/Local/Programs/Microsoft%20VS%20Code/resources/app/out/vs/workbench/workbench.desktop.main.js:1338:3824)
+2025-12-06 12:49:08.524 [error] Error: 2 tests failed
+	at c:\Users\Micha\extensions-local\vscode-dired\out\test\index.js:47:35
+	at done (c:\Users\Micha\extensions-local\vscode-dired\node_modules\mocha\lib\mocha.js:1012:7)
