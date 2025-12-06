@@ -1,69 +1,60 @@
 # vscode-dired
 
-Fork of https://github.com/shirou/vscode-dired
+Fork of https://github.com/shirou/vscode-dired — a lightweight, keyboard-first
+directory editor for VS Code inspired by Emacs dired.
 
-Lightweight keyboard-first directory editor for VS Code (Emacs dired-inspired).
-
-## Quick Summary
+## Quick summary
 - Keyboard-driven file manager inside a read-only editor buffer.
 - Create, delete, rename, and copy files and directories from the keyboard.
-- Integrated terminal opens directly in the current Dired folder (terminal editor).
+- Integrated terminal opens directly in the current Dired folder.
 
+## Commands (single table)
+Below is a consolidated list of contributed commands. Keybindings are shown
+when a default is provided by the extension — they can be customized in
+VS Code keyboard shortcuts.
 
-## Commands & Keybindings
-
-Common commands (keybinding shown in parentheses). Keybindings apply when a Dired buffer is focused and are customizable in VS Code shortcuts.
-
-- Open Dired: `extension.dired.open` (Ctrl+X D)
-- Toggle dotfiles: `extension.dired.toggleDotFiles` (Ctrl+X .)
-- Open terminal in folder: `extension.dired.openTerminal` (Ctrl+X T)
-- Create file / directory: `extension.dired.createFile` / `extension.dired.createDir` (Ctrl+X Ctrl+N f / d)
-- Rename / Copy / Delete: `extension.dired.rename` / `extension.dired.copy` / `extension.dired.delete` (Ctrl+X R / Alt+W / Ctrl+X Shift+D)
-- Enter / Go up: `extension.dired.enter` (Enter) / `extension.dired.goUpDir` (Ctrl+B)
-- Refresh / Find: `extension.dired.refresh` / `extension.dired.findInFolder` (Ctrl+X R / Ctrl+X F)
-- Copy path / name: `extension.dired.copyPath` / `extension.dired.copyName` (Ctrl+X Ctrl+P / Ctrl+X P)
-- Select / Unselect: `extension.dired.select` / `extension.dired.unselect`
-- Close / Undo: `extension.dired.close` / `extension.dired.undoLastAction`
-
-For the full list of contributed commands and exact bindings see `package.json` or open Keyboard Shortcuts in VS Code.
+| Command | Command ID | Default keybinding | Description |
+|---|---|---|---|
+| Open Dired / open directory | `extension.dired.open` | `ctrl+x d` | Open a directory in Dired |
+| Open integrated terminal (in folder) | `extension.dired.openTerminal` | `ctrl+x t` | Open the integrated terminal scoped to the current Dired folder |
+| Create file | `extension.dired.createFile` | `ctrl+x ctrl+n f` | Create a new file in the current Dired directory (created but not opened) |
+| Create directory | `extension.dired.createDir` | `ctrl+x ctrl+n d` | Create a new directory in the current Dired directory |
+| Find in folder | `extension.dired.findInFolder` | `ctrl+x f` | Open Find-in-Files scoped to the current Dired folder or selected file's parent |
+| Copy full path | `extension.dired.copyPath` | `ctrl+x ctrl+p` | Copy the full path of the selected row (or current directory when on header) |
+| Copy name | `extension.dired.copyName` | `ctrl+x p` | Copy the filename of the selected row |
+| Toggle dotfiles | `extension.dired.toggleDotFiles` | `ctrl+x .` | Show/hide hidden files |
+| Toggle meta files | `extension.dired.toggleMetaFiles` | — | Toggle display of `.meta` (Unity-style) metadata files |
+| Rename | `extension.dired.rename` | — | Rename the selected file or folder |
+| Copy selected | `extension.dired.copy` | `alt+w` | Copy selected files/folders |
+| Delete selected | `extension.dired.delete` | `ctrl+x shift+d` | Delete selected file(s)/folder(s) (tries to use OS Trash/Recycle Bin) |
+| Go up / parent directory | `extension.dired.goUpDir` | `ctrl+b` | Navigate to the parent directory |
+| Refresh listing | `extension.dired.refresh` | `ctrl+x r` | Refresh the directory listing |
+| Select / Unselect | `extension.dired.select` / `extension.dired.unselect` | — | Select or unselect the current file |
+| Close Dired buffer | `extension.dired.close` | — | Close the active Dired buffer |
+| Undo last action | `extension.dired.undoLastAction` | — | Undo the last create/delete action when available (status-bar provides quick access) |
+| Debug link ranges | `extension.dired.debugLinkRanges` | — | Debug helper: writes computed link start columns into the Dired debug output channel |
 
 ## Delete & Undo
-- Deletes attempt to move items to the OS Trash/Recycle Bin when available and also keep a temporary backup to enable an "Undo" of the last action.
-- A persistent status-bar item shows the last action and provides the Undo command (`Dired: Undo Last Action` / `extension.dired.undoLastAction`).
-- Backups live in the OS temp folder and are not auto-purged by the extension.
-
-## Commands
-- `extension.dired.open` — Open a directory in Dired
-- `extension.dired.openTerminal` — Open terminal in current Dired folder (terminal editor)
-- `extension.dired.createFile` / `extension.dired.createDir` — Create file/dir in current Dired folder
-- `extension.dired.undoLastAction` — Undo last create/delete action when available
-- `extension.dired.findInFolder` — Open Find in Files view scoped to the current Dired folder or the parent of the selected file
-- `extension.dired.copyPath` — Copy full path of the selected row (or current directory when on header)
-- `extension.dired.copyName` — Copy filename of the selected row
-- `extension.dired.toggleDotFiles` — Toggle dotfiles (show/hide hidden files)
-- `extension.dired.toggleMetaFiles` — Toggle display of `.meta` files (Unity-style metadata)
-- `extension.dired.rename` — Rename selected file or folder
-- `extension.dired.copy` — Copy selected files/folders
-- `extension.dired.delete` — Delete selected files/folders (tries Trash Bin)
-- `extension.dired.goUpDir` — Go to the parent directory
-- `extension.dired.refresh` — Refresh directory listing
-- `extension.dired.select` / `extension.dired.unselect` — Select/unselect current file
-- `extension.dired.close` — Close the active Dired buffer
-- `extension.dired.debugLinkRanges` — Debug helper: writes computed link start columns into Dired Debug output channel
+- Deletes attempt to move items to the OS Trash/Recycle Bin when available and
+	the extension keeps a temporary backup so the last action can be undone.
+- A persistent status-bar item shows the last action and provides quick access
+	to `Dired: Undo Last Action` (`extension.dired.undoLastAction`).
 
 ## Development
 - Watch & debug (recommended):
- 
+
 ```powershell
 npm run watch
 ```
 
 - One-off compile:
+
 ```powershell
 npm run compile
 ```
 
 - Package vsix:
+
 ```powershell
 npm run package
 ```
