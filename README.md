@@ -25,6 +25,7 @@ Below are the default keybindings contributed by the extension (customizable in 
 - `alt+w` - Copy selected file(s)/folder(s)
 - `ctrl+b` - Go to parent (up) directory
 - `ctrl+x r` - Refresh directory listing
+- `ctrl+x f` - Find in folder (open the Find in Files view scoped to the current dired folder or selected file's parent folder; recursive include `**`)
 
 Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 
@@ -38,6 +39,19 @@ Tip: All keybindings are customizable in VS Code keyboard shortcuts.
 - `extension.dired.openTerminal` — Open terminal in current Dired folder (terminal editor)
 - `extension.dired.createFile` / `extension.dired.createDir` — Create file/dir in current Dired folder
 - `extension.dired.undoLastAction` — Undo last create/delete action when available
+- `extension.dired.findInFolder` — Open Find in Files view scoped to the current Dired folder or the parent of the selected file
+- `extension.dired.copyPath` — Copy full path of the selected row (or current directory when on header)
+- `extension.dired.copyName` — Copy filename of the selected row
+- `extension.dired.toggleDotFiles` — Toggle dotfiles (show/hide hidden files)
+- `extension.dired.toggleMetaFiles` — Toggle display of `.meta` files (Unity-style metadata)
+- `extension.dired.rename` — Rename selected file or folder
+- `extension.dired.copy` — Copy selected files/folders
+- `extension.dired.delete` — Delete selected files/folders (tries Trash Bin)
+- `extension.dired.goUpDir` — Go to the parent directory
+- `extension.dired.refresh` — Refresh directory listing
+- `extension.dired.select` / `extension.dired.unselect` — Select/unselect current file
+- `extension.dired.close` — Close the active Dired buffer
+- `extension.dired.debugLinkRanges` — Debug helper: writes computed link start columns into Dired Debug output channel
 
 ## Development
 - Watch & debug (recommended):
