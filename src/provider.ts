@@ -48,6 +48,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _dirCache: Map<string, { entries: Array<any>, dirMtime?: number }> = new Map();
     // debounce timers for watchers to coalesce rapid FS events
     private _watchDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
+    // Map of directory -> last cursor position { line, col }
+    private _lastCursorPos: Map<string, { line: number, col: number }> = new Map();
 
     constructor(fixed_window: boolean) {
         this._fixed_window = fixed_window;
@@ -471,6 +473,20 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // If `fixed_window` is true and `show_path_in_tab` is false, reuse FIXED_URI so the same
         // editor instance is used across directories. If `show_path_in_tab` is true, use a path
         // URI so the tab shows the path; we will close other dired editors to keep a single tab.
+        // Save current cursor position for the currently open directory so it
+        // can be restored when the user returns to it.
+        try {
+            const prevDir = this.dirname;
+            const at = vscode.window.activeTextEditor;
+            if (prevDir && at && at.document && at.document.uri && at.document.uri.scheme === DiredProvider.scheme) {
+                const cursor = at.selection.active;
+                // Only store data-line positions (line >= 1) to avoid header positions
+                if (typeof cursor.line === 'number' && cursor.line >= 1) {
+                    this._lastCursorPos.set(path.resolve(prevDir), { line: cursor.line, col: cursor.character });
+                }
+            }
+        } catch (e) { /* ignore saving errors */ }
+
         const uri = (this._fixed_window && !this._show_path_in_tab) ? FIXED_URI : this.createPathUriForDir(dirPath);
         if (!uri) return;
 
@@ -485,34 +501,46 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                 try { vscode.languages.setTextDocumentLanguage(editor.document, "dired"); } catch (e) { }
                 // Move the cursor to the filename column (compute dynamically)
                 try {
-                    const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
-                    const text = editor.document.lineAt(targetLine).text;
-                    let startCol = 52; // fallback
-                    try {
-                        const item = FileItem.parseLine(this.dirname || '.', text);
-                        if (item && item.fileName) {
-                            // Prefer the parsed start column if available
-                            if (typeof item.startColumn === 'number') {
-                                startCol = item.startColumn;
-                            } else {
-                                const idx = text.lastIndexOf(item.fileName);
-                                if (idx >= 0) startCol = idx;
-                            }
-                            // Heuristic: prefer the occurrence of filename that happens after the HH:MM token
-                            try {
-                                const timeMatch = text.match(/\d{2}:\d{2}/);
-                                if (timeMatch && typeof timeMatch.index === 'number') {
-                                    // Find the first non-space position after the time token
+                    // If we have a stored cursor position for this directory, prefer it.
+                    const stored = (() => {
+                        try { return this._lastCursorPos.get(path.resolve(dirPath)); } catch (e) { return undefined; }
+                    })();
+                    if (stored && typeof stored.line === 'number' && stored.line >= 1 && stored.line < editor.document.lineCount) {
+                        const line = Math.min(stored.line, editor.document.lineCount - 1);
+                        const col = Math.max(0, stored.col || 0);
+                        const pos = new vscode.Position(line, Math.min(col, editor.document.lineAt(line).text.length));
+                        editor.selection = new vscode.Selection(pos, pos);
+                        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                    } else {
+                        const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
+                        const text = editor.document.lineAt(targetLine).text;
+                        let startCol = 52; // fallback
+                        try {
+                            const item = FileItem.parseLine(this.dirname || '.', text);
+                            if (item && item.fileName) {
+                                // Prefer the parsed start column if available
+                                if (typeof item.startColumn === 'number') {
+                                    startCol = item.startColumn;
+                                } else {
+                                    const idx = text.lastIndexOf(item.fileName);
+                                    if (idx >= 0) startCol = idx;
+                                }
+                                // Heuristic: prefer the occurrence of filename that happens after the HH:MM token
+                                try {
+                                    const timeMatch = text.match(/\d{2}:\d{2}/);
+                                    if (timeMatch && typeof timeMatch.index === 'number') {
+                                        // Find the first non-space position after the time token
                                         let pos = timeMatch.index + timeMatch[0].length;
                                         while (pos < text.length && text.charAt(pos) === ' ') pos++;
                                         if (pos < text.length) startCol = pos;
-                                }
-                            } catch (e) { /* ignore */ }
-                        }
-                    } catch (e) { /* ignore */ }
-                    const pos = new vscode.Position(targetLine, startCol);
-                    editor.selection = new vscode.Selection(pos, pos);
-                    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                                    }
+                                } catch (e) { /* ignore */ }
+                            }
+                        } catch (e) { /* ignore */ }
+                        const pos = new vscode.Position(targetLine, startCol);
+                        editor.selection = new vscode.Selection(pos, pos);
+                        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+                    }
                 } catch (e) { /* ignore */ }
 
                 if (this._fixed_window) {

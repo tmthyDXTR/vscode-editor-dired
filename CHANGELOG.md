@@ -44,6 +44,7 @@
   - Misc
     - Additional minor refactors and defensive checks to make the provider robust across platforms and formatting changes.
 
+  - Add: Persistent cursor position when entering previous folder
 
   ## Version 0.1.3 - 2025-12-06
 
