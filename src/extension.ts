@@ -92,6 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (dir) {
             if (!ask_dir) {
                 provider.openDir(dir);
+                vscode.window.setStatusBarMessage(`Dired: Opened ${dir}`, 3000);
             } else {
                 vscode.window.showInputBox({ value: dir, valueSelection: [dir.length, dir.length] })
                         .then(async (path) => {
@@ -118,11 +119,21 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     const commandEnter = vscode.commands.registerCommand("extension.dired.enter", () => {
+        const selected = provider.getSelectedPath();
         provider.enter();
+        if (selected) vscode.window.setStatusBarMessage(`Opened ${selected}`, 3000);
     });
     const commandToggleDotFiles = vscode.commands.registerCommand("extension.dired.toggleDotFiles", () => {
+        console.log('Dired: toggleDotFiles command invoked');
         provider.toggleDotFiles();
+        try { vscode.window.setStatusBarMessage(`Dired: ${provider.showDotFiles ? 'Showing' : 'Hiding'} dotfiles`, 3000); } catch (e) { }
     });
+    const commandToggleMetaFilesCmd = vscode.commands.registerCommand("extension.dired.toggleMetaFiles", () => {
+        console.log('Dired: toggleMetaFiles command invoked');
+        provider.toggleMetaFiles();
+        try { vscode.window.setStatusBarMessage(`Dired: ${provider.showMetaFiles ? 'Showing' : 'Hiding'} .meta files`, 3000); } catch (e) { }
+    });
+    
 
     const commandCreateDir = vscode.commands.registerCommand("extension.dired.createDir", async () => {
         let dirName = await vscode.window.showInputBox({ prompt: "Directory name" });
@@ -147,6 +158,7 @@ export function activate(context: vscode.ExtensionContext) {
             // But setLastAction not accessible here; instead reuse workspaceState and show statusItem
             // We'll set status text directly
             try { statusItem.text = `$(plus) Created ${path.basename(p)} — Undo`; statusItem.tooltip = `Remove ${p}`; statusItem.show(); } catch {}
+            vscode.window.setStatusBarMessage(`Created ${p}`, 3000);
         } catch (err) {
             vscode.window.setStatusBarMessage(`Failed to create directory ${p}: ${err}`, 5000);
         }
@@ -164,9 +176,11 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 const term = vscode.window.createTerminal({ cwd: cwd as any, name: `dired: ${path.basename(cwd)}`, location: { viewColumn: vscode.ViewColumn.Active } as any } as any);
                 term.show(true);
+                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
             } catch (e) {
                 const fallbackTerm = vscode.window.createTerminal({ cwd: cwd, name: `dired: ${path.basename(cwd)}` });
                 fallbackTerm.show();
+                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
             }
         } catch (err) {
             vscode.window.setStatusBarMessage(`Failed to open terminal: ${err}`, 5000);
@@ -193,6 +207,7 @@ export function activate(context: vscode.ExtensionContext) {
             .then((newName: string | undefined) => {
                 if (!newName) return;
                 provider.copySelected(newName);
+                vscode.window.setStatusBarMessage(`Copying to ${newName}`, 3000);
             });
     });
 
@@ -216,9 +231,18 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             const stat = await fs.promises.stat(selected);
             const isDir = stat.isDirectory();
-            // Create a backup copy to allow undo
+            // Create a backup copy to allow undo. Purge any prior backups; we only
+            // keep the last one so the temp folder doesn't grow indefinitely.
             const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
             await fs.promises.mkdir(backupRoot, { recursive: true });
+            try {
+                const files = await fs.promises.readdir(backupRoot);
+                for (const f of files) {
+                    try {
+                        await fs.promises.rm(path.join(backupRoot, f), { recursive: true, force: true });
+                    } catch (e) { /* ignore cleanup errors */ }
+                }
+            } catch (e) { /* ignore cleanup errors */ }
             const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
             const backupPath = path.join(backupRoot, backupName);
             // Copy recursively to backup using module-level helper
@@ -248,19 +272,24 @@ export function activate(context: vscode.ExtensionContext) {
 
     const commandGoUpDir = vscode.commands.registerCommand("extension.dired.goUpDir", () => {
         provider.goUpDir();
+        try { const d = provider.dirname ? path.resolve(provider.dirname, '..') : undefined; if (d) vscode.window.setStatusBarMessage(`Moved to ${d}`, 3000); } catch (e) {}
     });
 
     const commandRefresh = vscode.commands.registerCommand("extension.dired.refresh", () => {
         provider.reload();
+        try { vscode.window.setStatusBarMessage(`Dired: refreshed`, 1500); } catch (e) {}
     });
     const commandSelect = vscode.commands.registerCommand("extension.dired.select", () => {
         provider.select();
+        vscode.window.setStatusBarMessage(`Dired: selection updated`, 1500);
     });
     const commandUnselect = vscode.commands.registerCommand("extension.dired.unselect", () => {
         provider.unselect();
+        vscode.window.setStatusBarMessage(`Dired: selection updated`, 1500);
     });
     const commandClose = vscode.commands.registerCommand("extension.dired.close", () => {
         vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        vscode.window.setStatusBarMessage(`Closed Dired`, 1500);
     });
 
     const commandCreateFile = vscode.commands.registerCommand("extension.dired.createFile", async () => {
@@ -397,6 +426,7 @@ export function activate(context: vscode.ExtensionContext) {
         commandOpen,
         commandEnter,
         commandToggleDotFiles,
+        commandToggleMetaFilesCmd,
         commandCreateDir,
         commandOpenTerminal,
         commandCreateFile,
@@ -512,7 +542,9 @@ export function activate(context: vscode.ExtensionContext) {
             if (la.type === 'delete') {
                 // Restore from backup using module-level helper
                 await restoreRecursive(la.backup, la.path);
+                try { await fs.promises.rm(la.backup, { recursive: true, force: true }); } catch (e) { /* ignore */ }
                 await context.workspaceState.update('dired.lastAction', null);
+                setLastAction(null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
                 vscode.window.setStatusBarMessage(`Restored ${la.path}`, 5000);
             } else if (la.type === 'create') {
@@ -523,6 +555,7 @@ export function activate(context: vscode.ExtensionContext) {
                     try { await fs.promises.unlink(la.path); } catch {}
                 }
                 await context.workspaceState.update('dired.lastAction', null);
+                setLastAction(null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
                 vscode.window.setStatusBarMessage(`Removed ${la.path}`, 5000);
             }
@@ -533,15 +566,20 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(commandUndo);
 
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor && editor.document.uri.scheme === DiredProvider.scheme) {
+        try {
+            const scheme = (editor && editor.document && editor.document.uri) ? editor.document.uri.scheme : 'none';
+            console.log('Dired: Active editor changed. scheme=' + scheme);
+            if (editor && editor.document.uri.scheme === DiredProvider.scheme) {
             editor.options = {
                 cursorStyle: vscode.TextEditorCursorStyle.Block,
             };
             vscode.commands.executeCommand('setContext', 'dired.open', true);
-        } else {
+            } else {
             vscode.commands.executeCommand('setContext', 'dired.open', false);
         }
+        } catch (e) { /* ignore logging or context errors */ }
     });
+
 
     return {
         DiredProvider: provider,

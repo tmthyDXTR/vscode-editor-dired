@@ -36,6 +36,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     private _fixed_window: boolean;
     private _show_dot_files: boolean = true;
+    // Toggle display of `.meta` files (e.g., Unity .meta files)
+    private _show_meta_files: boolean = true;
     private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
     private _show_path_in_tab: boolean = false;
     private _watcher: vscode.FileSystemWatcher | null = null;
@@ -111,6 +113,32 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // both the per-directory URI and the active Dired URI (fixed_window support)
         // get refreshed. Fall back to reload() if dirname is not available.
         const dir = this.dirname;
+        // Ensure cache no longer serves stale listings which don't reflect the
+        // updated `_show_dot_files` value. Delete the per-dir cache entry so
+        // `createBuffer` will rebuild the listing taking `_show_dot_files` into
+        // account. If `dir` is not set, clear all caches to be safe.
+        try {
+            if (dir) {
+                this._dirCache.delete(dir);
+            } else {
+                this._dirCache.clear();
+            }
+        } catch (e) { /* ignore cache deletion errors */ }
+        if (dir) {
+            await this.notifyDirChanged(dir);
+        } else {
+            this.reload();
+        }
+    }
+
+    async toggleMetaFiles() {
+        this._show_meta_files = !this._show_meta_files;
+        const dir = this.dirname;
+        // Clear cache for the current dir or all to ensure listing rebuild reflects meta visibility
+        try {
+            if (dir) this._dirCache.delete(dir);
+            else this._dirCache.clear();
+        } catch (e) { /* ignore */ }
         if (dir) {
             await this.notifyDirChanged(dir);
         } else {
@@ -540,6 +568,15 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         return path.resolve(f.path || '.');
     }
 
+    // Expose current flags so callers can display status messages after toggles
+    public get showDotFiles(): boolean {
+        return this._show_dot_files;
+    }
+
+    public get showMetaFiles(): boolean {
+        return this._show_meta_files;
+    }
+
     private render(): Thenable<string> {
         return new Promise((resolve) => {
             resolve(this._buffers.join('\n'));
@@ -600,6 +637,18 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             }
             // include '.' and '..' similar to previous behavior
             let names = ['.', '..', ...entries];
+
+            // Honor the `_show_dot_files` flag: when false, filter out entries
+            // starting with '.' except for '.' and '..'. This mirrors the
+            // behavior implemented in `readDir` and ensures toggling dotfiles
+            // updates the displayed listing.
+            if (!this._show_dot_files) {
+                names = names.filter((n) => n === '.' || n === '..' || n.charAt(0) !== '.');
+            }
+            // Honor `_show_meta_files`: when false, filter out files that end with '.meta'
+            if (!this._show_meta_files) {
+                names = names.filter((n) => n === '.' || n === '..' || !n.toLowerCase().endsWith('.meta'));
+            }
 
             let truncated = false;
             if (names.length > MAX_ENTRIES) {

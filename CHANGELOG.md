@@ -49,17 +49,24 @@
   - Added `clearBuffers()` and ensured debounce timers and watcher resources are cleared on document close / provider dispose to free retained memory.
   - Other micro-optimizations: avoided intermediate Buffer allocations in `readFile`/`writeFile`, and moved hot helpers out of per-call closures.
 
-## Files added / modified (high level)
+  ## Version 0.1.3 - 2025-12-06
 
-- Modified:
-  - `src/extension.ts` — added commands, status-bar undo UI, DocumentLinkProvider, terminal open command, delete/undo logic
-  - `src/provider.ts` — `readFile` Uint8Array fix, `createFile`/`createDir`/`deleteSelected` refresh improvements, `notifyDirChanged`, `toggleDotFiles` refresh
-  - `src/fileItem.ts` — used by link provider and parsing (no functional API change required)
-  - `package.json` — added `extension.dired.openTerminal` activation and keybinding entries (and other keybindings already present were synced into README)
-  - `README.md` — replaced with concise documentation and full keybindings list
+  - Fix: Ensure `toggleDotFiles` reliably refreshes the Dired view after toggling. `toggleDotFiles()` now clears the directory cache so the listing is rebuilt and dotfiles reappear when toggled back on.
 
-## Notes & next steps
+  - Add: Toggle for unity `.meta` files.
+    - New command: `extension.dired.toggleMetaFiles` (no default keybinding).
+    - Provider flag `_show_meta_files` and `toggleMetaFiles()` implementation in `src/provider.ts`.
 
-- Backups created for Undo live in the OS temporary folder and are not automatically cleaned up. Consider adding a cleanup strategy if needed.
-- Some refresh/notification behavior depends on `dired.fixed_window` and `dired.show_path_in_tab` configuration; `notifyDirChanged` was added to make refresh behavior robust across modes.
-- If Ctrl/Cmd+Click does not open links for you, check the `editor.multiCursorModifier` setting: if set to `ctrlCmd` then Ctrl+Click is used for multi-cursor; try Alt+Click or change the setting.
+  - Add: Status-bar messages for many Dired commands (open, enter, toggle dotfiles, toggle .meta files, createDir, openTerminal, copy, delete, goUpDir, refresh, select/unselect, close) so users get immediate visual feedback.
+
+  - Add: `provider.showDotFiles` and `provider.showMetaFiles` getters so the extension can report toggle state in the UI.
+
+  - Add: `onLanguage:dired` activation event so the extension activates when Dired files open.
+
+  - Improve: Contributed command names and titles to include a 'Dired:' prefix in the Command Palette for easier discovery.
+
+  - Update: `package.json` now includes the commands that the extension registers and activation events for them so keybindings can reliably activate the extension and be discovered by the Command Palette.
+
+  ## Files changed in this release
+
+  - Modified: `src/provider.ts`, `src/extension.ts`, `package.json`, `README.md`, `out/*` compiled artifacts

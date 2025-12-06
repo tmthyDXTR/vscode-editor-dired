@@ -2,7 +2,7 @@
 	"name": "vscode-dired-local",
 	"displayName": "vscode-dired (local edit by supacoda)",
 	"description": "dired(File Manager) for VSCode, like Emacs",
-	"version": "0.1.2-local",
+	"version": "0.1.3-dev",
 	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
@@ -18,7 +18,23 @@
 	"activationEvents": [
 		"onCommand:extension.dired.open",
 		"onCommand:extension.dired.copyPath",
-		"onCommand:extension.dired.openTerminal"
+		"onCommand:extension.dired.openTerminal",
+		"onCommand:extension.dired.toggleDotFiles",
+		"onCommand:extension.dired.enter",
+		"onCommand:extension.dired.createDir",
+		"onCommand:extension.dired.rename",
+		"onCommand:extension.dired.copy",
+		"onCommand:extension.dired.delete",
+		"onCommand:extension.dired.goUpDir",
+		"onCommand:extension.dired.refresh",
+		"onCommand:extension.dired.select",
+		"onCommand:extension.dired.unselect",
+		"onCommand:extension.dired.close",
+		"onCommand:extension.dired.createFile",
+		"onCommand:extension.dired.copyName",
+		"onCommand:extension.dired.undoLastAction",
+		"onCommand:extension.dired.toggleMetaFiles",
+		"onLanguage:dired"
 	],
 	"categories": [
 		"Other"
@@ -41,11 +57,66 @@
 			{
 				"command": "extension.dired.copyPath",
 				"title": "Copy path of selected file"
-			}
-			,
+			},
 			{
 				"command": "extension.dired.copyName",
 				"title": "Copy name of selected file"
+			},
+			{
+				"command": "extension.dired.toggleDotFiles",
+				"title": "Dired: Toggle dotfiles (show/hide hidden files)"
+			},
+			{
+				"command": "extension.dired.enter",
+				"title": "Open file / enter folder"
+			},
+			{
+				"command": "extension.dired.createDir",
+				"title": "Create a directory"
+			},
+			{
+				"command": "extension.dired.createFile",
+				"title": "Create a file"
+			},
+			{
+				"command": "extension.dired.rename",
+				"title": "Rename selected"
+			},
+			{
+				"command": "extension.dired.copy",
+				"title": "Copy selected file(s) / directory"
+			},
+			{
+				"command": "extension.dired.delete",
+				"title": "Delete selected file(s) / directory"
+			},
+			{
+				"command": "extension.dired.goUpDir",
+				"title": "Go up to parent directory"
+			},
+			{
+				"command": "extension.dired.refresh",
+				"title": "Refresh directory listing"
+			},
+			{
+				"command": "extension.dired.select",
+				"title": "Select file"
+			},
+			{
+				"command": "extension.dired.unselect",
+				"title": "Unselect file"
+			},
+			{
+				"command": "extension.dired.close",
+				"title": "Close Dired buffer"
+			},
+			{
+				"command": "extension.dired.undoLastAction",
+				"title": "Undo Dired last action"
+			},
+			{
+				"command": "extension.dired.toggleMetaFiles",
+				"title": "Dired: Toggle .meta files (show/hide .meta files)"
 			}
 		],
 		"keybindings": [
