@@ -1,9 +1,24 @@
+## Exclude development/source/test files and local IDE data
 .vscode/**
 .vscode-test/**
-out/test/**
 test/**
 src/**
+out/test/**
+
+## Exclude source maps and common dev files
 **/*.map
-.gitignore
 tsconfig.json
 vsc-extension-quickstart.md
+.gitignore
+
+## Exclude common caches, logs and OS cruft
+*.log
+.DS_Store
+Thumbs.db
+
+## Exclude repository/CI metadata
+.git/
+.github/
+
+## Ensure compiled runtime output is included in the VSIX
+!out/**
