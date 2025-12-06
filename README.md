@@ -10,24 +10,22 @@ Lightweight keyboard-first directory editor for VS Code (Emacs dired-inspired).
 - Integrated terminal opens directly in the current Dired folder (terminal editor).
 
 
-## Default Keybindings (full list)
-Below are the default keybindings contributed by the extension (customizable in VS Code):
+## Commands & Keybindings
 
-- `ctrl+x .` - Toggle dotfiles (show/hide hidden files)
-- `ctrl+x d` - Open Dired / open directory
-- `ctrl+x t` - Open integrated terminal in the current Dired folder (terminal editor; no extra `cd` is run)
-- `ctrl+x ctrl+n f` - Create a new file in the current Dired directory (created but not opened)
-- `ctrl+x ctrl+n d` - Create a new directory in the current Dired directory
-- `ctrl+x ctrl+p` - Copy path of the selected row (or current directory when on header)
-- `ctrl+x p` - Copy file / folder name
-- `Enter` - Open file / enter directory
-- `ctrl+x shift+d` - Delete selected file(s) or folder(s)
-- `alt+w` - Copy selected file(s)/folder(s)
-- `ctrl+b` - Go to parent (up) directory
-- `ctrl+x r` - Refresh directory listing
-- `ctrl+x f` - Find in folder (open the Find in Files view scoped to the current dired folder or selected file's parent folder; recursive include `**`)
+Common commands (keybinding shown in parentheses). Keybindings apply when a Dired buffer is focused and are customizable in VS Code shortcuts.
 
-Tip: All keybindings are customizable in VS Code keyboard shortcuts.
+- Open Dired: `extension.dired.open` (Ctrl+X D)
+- Toggle dotfiles: `extension.dired.toggleDotFiles` (Ctrl+X .)
+- Open terminal in folder: `extension.dired.openTerminal` (Ctrl+X T)
+- Create file / directory: `extension.dired.createFile` / `extension.dired.createDir` (Ctrl+X Ctrl+N f / d)
+- Rename / Copy / Delete: `extension.dired.rename` / `extension.dired.copy` / `extension.dired.delete` (Ctrl+X R / Alt+W / Ctrl+X Shift+D)
+- Enter / Go up: `extension.dired.enter` (Enter) / `extension.dired.goUpDir` (Ctrl+B)
+- Refresh / Find: `extension.dired.refresh` / `extension.dired.findInFolder` (Ctrl+X R / Ctrl+X F)
+- Copy path / name: `extension.dired.copyPath` / `extension.dired.copyName` (Ctrl+X Ctrl+P / Ctrl+X P)
+- Select / Unselect: `extension.dired.select` / `extension.dired.unselect`
+- Close / Undo: `extension.dired.close` / `extension.dired.undoLastAction`
+
+For the full list of contributed commands and exact bindings see `package.json` or open Keyboard Shortcuts in VS Code.
 
 ## Delete & Undo
 - Deletes attempt to move items to the OS Trash/Recycle Bin when available and also keep a temporary backup to enable an "Undo" of the last action.
