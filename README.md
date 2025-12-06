@@ -1,4 +1,3 @@
-```markdown
 # vscode-dired
 
 Fork of https://github.com/shirou/vscode-dired
@@ -63,6 +62,3 @@ Tasks: `.vscode/tasks.json` includes `npm: watch`, `npm: compile`, `npm: test`, 
 Apache-2.0
 
 ---
-
-Edited locally by tmthyDXTR (supacoda)
-```

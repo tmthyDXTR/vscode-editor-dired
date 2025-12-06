@@ -175,11 +175,13 @@ export function activate(context: vscode.ExtensionContext) {
             } catch (e) { cwd = fallback; }
             try {
                 const term = vscode.window.createTerminal({ cwd: cwd as any, name: `dired: ${path.basename(cwd)}`, location: { viewColumn: vscode.ViewColumn.Active } as any } as any);
-                term.show(true);
+                // Focus the terminal so keyboard input can be typed directly
+                term.show(false);
                 vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
             } catch (e) {
                 const fallbackTerm = vscode.window.createTerminal({ cwd: cwd, name: `dired: ${path.basename(cwd)}` });
-                fallbackTerm.show();
+                // Focus fallback terminal explicitly as well
+                fallbackTerm.show(false);
                 vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
             }
         } catch (err) {
@@ -231,18 +233,9 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             const stat = await fs.promises.stat(selected);
             const isDir = stat.isDirectory();
-            // Create a backup copy to allow undo. Purge any prior backups; we only
-            // keep the last one so the temp folder doesn't grow indefinitely.
+            // Create a backup copy to allow undo
             const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
             await fs.promises.mkdir(backupRoot, { recursive: true });
-            try {
-                const files = await fs.promises.readdir(backupRoot);
-                for (const f of files) {
-                    try {
-                        await fs.promises.rm(path.join(backupRoot, f), { recursive: true, force: true });
-                    } catch (e) { /* ignore cleanup errors */ }
-                }
-            } catch (e) { /* ignore cleanup errors */ }
             const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
             const backupPath = path.join(backupRoot, backupName);
             // Copy recursively to backup using module-level helper
@@ -542,9 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (la.type === 'delete') {
                 // Restore from backup using module-level helper
                 await restoreRecursive(la.backup, la.path);
-                try { await fs.promises.rm(la.backup, { recursive: true, force: true }); } catch (e) { /* ignore */ }
                 await context.workspaceState.update('dired.lastAction', null);
-                setLastAction(null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
                 vscode.window.setStatusBarMessage(`Restored ${la.path}`, 5000);
             } else if (la.type === 'create') {
@@ -555,7 +546,6 @@ export function activate(context: vscode.ExtensionContext) {
                     try { await fs.promises.unlink(la.path); } catch {}
                 }
                 await context.workspaceState.update('dired.lastAction', null);
-                setLastAction(null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
                 vscode.window.setStatusBarMessage(`Removed ${la.path}`, 5000);
             }
