@@ -1,5 +1,36 @@
 # Changelog
 
+## Version 0.1.4 - 2025-12-06
+
+  - Add: Human-friendly size formatting
+    - `FileItem.line()` now displays file sizes using human-readable units (K/M/G) where appropriate (e.g. `5.5K`) and `parseLine()` converts these back to numeric bytes for internal operations.
+
+  - Fix: Link and cursor placement in Dired views
+    - `FileItem` now exposes a `startColumn` computed from the formatted line so callers can rely on precise filename column info.
+    - Parsing heuristics improved to prefer the filename occurrence after the `HH:MM` timestamp and compute `startColumn` from the regex match or from the formatted line when necessary.
+    - DocumentLinkProvider and provider now prefer `item.startColumn` so links and cursor placement align with the actual filename column.
+
+  - Fix: Links weren't active in some newly opened Dired views
+    - When a Dired document opens (including when created by clicking a link), the extension now ensures the document language is `dired` and triggers a refresh so DocumentLinkProvider immediately creates clickable ranges.
+
+  - Fix: Username/group shown as the literal 'undefined'
+    - `IDResolver` sanitizes cache files, ignoring `undefined`/`null` values and rewriting sanitized caches to avoid showing those literals in listings.
+    - `FileItem` displays a `-` placeholder for missing username or group to keep column widths stable.
+    - Added a Windows fallback to fill missing username with the OS username where uid/gid are unavailable.
+
+  - Add: Debug helper for link ranges
+    - Command: `Dired: Debug Link Ranges` — prints computed `startColumn` and parsed filenames for visible lines into the `Dired Debug` output channel so you can inspect and verify link ranges.
+
+  - Add: Start-column and parsing improvements
+    - `FileItem.parseLine()` is more robust and now rounds-up the start column using regex match index and the formatted line as fallback. This avoids earlier substring matches (e.g., `5:10` minutes) impacting the filename start column.
+
+  - Add: Unit tests
+    - Tests cover size formatting, format/parse round-trips, start-column behavior from `create()` and `parseLine()`, and `IDResolver` cache sanitation.
+
+  - Misc
+    - Additional minor refactors and defensive checks to make the provider robust across platforms and formatting changes.
+
+
   ## Version 0.1.3 - 2025-12-06
 
   - Fix: Ensure `toggleDotFiles` reliably refreshes the Dired view after toggling. `toggleDotFiles()` now clears the directory cache so the listing is rebuilt and dotfiles reappear when toggled back on.
@@ -21,7 +52,6 @@
   ## Files changed in this release
 
   - Modified: `src/provider.ts`, `src/extension.ts`, `package.json`, `README.md`, `out/*` compiled artifacts
-
 
 
 ## Version 0.1.2 - 2025-12-01

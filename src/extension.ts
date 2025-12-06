@@ -456,13 +456,25 @@ export function activate(context: vscode.ExtensionContext) {
             const endLine = Math.min(document.lineCount - 1, MAX_LINK_LINES);
             for (let i = 1; i <= endLine; i++) {
                 const line = document.lineAt(i).text;
-                if (!line || line.length <= 52) continue;
+                if (!line || !line.trim()) continue;
                 try {
                     const item = FileItem.parseLine(dir || '.', line);
                     const fname = item.fileName;
                     if (!fname) continue;
-                    const startPos = new vscode.Position(i, 52);
-                    const endPos = new vscode.Position(i, 52 + fname.length);
+                    // Determine filename start position by finding its last occurrence.
+                    let startCol = Math.max(0, (typeof item.startColumn === 'number') ? item.startColumn : line.lastIndexOf(fname));
+                    try {
+                        const timeMatch = line.match(/\d{2}:\d{2}/);
+                        if (timeMatch && typeof timeMatch.index === 'number') {
+                            // Find first non-space token after HH:MM; assume that's the filename start
+                            let pos = timeMatch.index + timeMatch[0].length;
+                            while (pos < line.length && line.charAt(pos) === ' ') pos++;
+                            if (pos < line.length) startCol = pos;
+                        }
+                    } catch (e) { /* ignore */ }
+                    if (startCol < 0) continue;
+                    const startPos = new vscode.Position(i, startCol);
+                    const endPos = new vscode.Position(i, startCol + fname.length);
                     const range = new vscode.Range(startPos, endPos);
                     const target = item.uri;
                     if (target) {
@@ -476,6 +488,42 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(linkProvider);
+
+    // Debug command to inspect computed link start columns in the current Dired buffer
+    const commandDebugLinks = vscode.commands.registerCommand('extension.dired.debugLinkRanges', async () => {
+        const ed = vscode.window.activeTextEditor;
+        if (!ed || ed.document.uri.scheme !== 'dired') {
+            vscode.window.showInformationMessage('Open a Dired buffer to debug link ranges.');
+            return;
+        }
+        const dirHeader = ed.document.lineAt(0).text.replace(/:\s*$/, '').replace(/^Dired:\s*/, '').trim();
+        const dir = dirHeader || '.';
+        const lines: string[] = [];
+        for (let i = 1; i < Math.min(ed.document.lineCount, 200); i++) {
+            const line = ed.document.lineAt(i).text;
+            if (!line || !line.trim()) continue;
+            try {
+                const item = FileItem.parseLine(dir, line);
+                const fname = item.fileName;
+                let startCol = typeof item.startColumn === 'number' ? item.startColumn : line.lastIndexOf(fname);
+                // prefer occurrence after time token
+                const timeMatch = line.match(/\d{2}:\d{2}/);
+                if (timeMatch && typeof timeMatch.index === 'number') {
+                    const afterTimeIdx = line.indexOf(fname, timeMatch.index + timeMatch[0].length);
+                    if (afterTimeIdx >= 0) startCol = Math.max(startCol, afterTimeIdx);
+                }
+                lines.push(`${i}: startCol=${startCol} file='${fname}' line='${line}'`);
+            } catch (e) {
+                /* ignore */
+            }
+        }
+        const out = lines.join('\n');
+        const channel = vscode.window.createOutputChannel('Dired Debug');
+        channel.clear();
+        channel.appendLine(out);
+        channel.show(true);
+    });
+    context.subscriptions.push(commandDebugLinks);
 
     // When the visible ranges of a Dired editor change (scroll/resize), refresh
     // the provider for that directory so DocumentLinkProvider will regenerate links
@@ -504,6 +552,19 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (e) { /* ignore errors */ }
     });
     context.subscriptions.push(visibleRangeListener);
+
+    // Ensure any 'dired' documents opened by clicking links or externally are
+    // recognized as `dired` language so DocumentLinkProvider runs immediately.
+    const openDocListener = vscode.workspace.onDidOpenTextDocument(async (doc) => {
+        try {
+            if (doc && doc.uri && doc.uri.scheme === DiredProvider.scheme) {
+                await vscode.languages.setTextDocumentLanguage(doc, 'dired');
+                // Ensure provider rebuilds cache for this dir so links are ready.
+                try { await provider.notifyDirChanged(doc.uri.fsPath); } catch (e) { /* ignore */ }
+            }
+        } catch (e) { /* ignore */ }
+    });
+    context.subscriptions.push(openDocListener);
 
     // Ensure visible-range timers get cleared when the extension is deactivated
     context.subscriptions.push(new vscode.Disposable(() => {

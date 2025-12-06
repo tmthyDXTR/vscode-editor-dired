@@ -233,9 +233,17 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             if (i === 0) continue;
             if (!oldLine && !newLine) continue;
 
-            // Extract filename portion (column 52 onwards) using same logic as FileItem.parseLine
-            const oldName = (oldLine.length >= 52) ? oldLine.substring(52) : '';
-            const newName = (newLine.length >= 52) ? newLine.substring(52) : '';
+            // Extract filename portion using FileItem.parseLine (robust to field sizes)
+            let oldName = '';
+            let newName = '';
+            try {
+                const oldItem = FileItem.parseLine(dir, oldLine);
+                oldName = oldItem ? oldItem.fileName : '';
+            } catch (e) { /* ignore */ }
+            try {
+                const newItem = FileItem.parseLine(dir, newLine);
+                newName = newItem ? newItem.fileName : '';
+            } catch (e) { /* ignore */ }
 
             if (oldName && newName && oldName !== newName) {
                 const oldPath = path.join(dir, oldName);
@@ -469,17 +477,43 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         // Open the dired document. readFile will call createBuffer when the document is read,
         // so avoid pre-populating the buffer here to prevent duplicate heavy allocations.
         vscode.workspace.openTextDocument(uri)
-            .then(doc => vscode.window.showTextDocument(doc, this.getTextDocumentShowOptions(this._fixed_window)))
+            .then(async (doc) => {
+                try { await vscode.languages.setTextDocumentLanguage(doc, 'dired'); } catch (e) { /* ignore */ }
+                return vscode.window.showTextDocument(doc, this.getTextDocumentShowOptions(this._fixed_window));
+            })
             .then(editor => {
                 try { vscode.languages.setTextDocumentLanguage(editor.document, "dired"); } catch (e) { }
-                // Move the cursor to the filename column (matches parseLine offset)
-                const filenameColumn = 52;
-                const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
+                // Move the cursor to the filename column (compute dynamically)
                 try {
-                    const pos = new vscode.Position(targetLine, filenameColumn);
+                    const targetLine = (editor.document.lineCount > 1) ? 1 : 0;
+                    const text = editor.document.lineAt(targetLine).text;
+                    let startCol = 52; // fallback
+                    try {
+                        const item = FileItem.parseLine(this.dirname || '.', text);
+                        if (item && item.fileName) {
+                            // Prefer the parsed start column if available
+                            if (typeof item.startColumn === 'number') {
+                                startCol = item.startColumn;
+                            } else {
+                                const idx = text.lastIndexOf(item.fileName);
+                                if (idx >= 0) startCol = idx;
+                            }
+                            // Heuristic: prefer the occurrence of filename that happens after the HH:MM token
+                            try {
+                                const timeMatch = text.match(/\d{2}:\d{2}/);
+                                if (timeMatch && typeof timeMatch.index === 'number') {
+                                    // Find the first non-space position after the time token
+                                        let pos = timeMatch.index + timeMatch[0].length;
+                                        while (pos < text.length && text.charAt(pos) === ' ') pos++;
+                                        if (pos < text.length) startCol = pos;
+                                }
+                            } catch (e) { /* ignore */ }
+                        }
+                    } catch (e) { /* ignore */ }
+                    const pos = new vscode.Position(targetLine, startCol);
                     editor.selection = new vscode.Selection(pos, pos);
                     editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-                } catch (e) { /* ignore if out of range */ }
+                } catch (e) { /* ignore */ }
 
                 if (this._fixed_window) {
                     const exempt = this._show_path_in_tab ? editor.document.uri : FIXED_URI;

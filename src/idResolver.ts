@@ -16,10 +16,16 @@ export class IDResolver {
     }
 
     username(uid: number): string | undefined {
-        return this._user_cache.get(uid);
+        const v = this._user_cache.get(uid);
+        if (!v) return undefined;
+        if (v.toLowerCase() === 'undefined' || v.toLowerCase() === 'null') return undefined;
+        return v;
     }
     groupname(uid: number): string | undefined {
-        return this._group_cache.get(uid);
+        const v = this._group_cache.get(uid);
+        if (!v) return undefined;
+        if (v.toLowerCase() === 'undefined' || v.toLowerCase() === 'null') return undefined;
+        return v;
     }
 
     private create(user: boolean) {
@@ -38,18 +44,30 @@ export class IDResolver {
             const data = fs.readFileSync(cache_path, { encoding: 'utf8' });
             if (!data) return;
             const lines = data.split(/\r?\n/);
+            const sanitizedEntries: Array<{ name: string, id: number }> = [];
             for (const line of lines) {
                 if (!line) continue;
                 const l = line.split(':');
                 // Expect format: name:...:id
-                const name = l[0];
+                const rawName = l[0];
+                const name = (rawName ? rawName.trim() : undefined);
                 const idStr = l.length > 2 ? l[2] : l[1];
                 const uid = parseInt(idStr || '', 10);
                 if (Number.isNaN(uid)) continue;
+                const invalid = (n: string | undefined) => !n || n.toLowerCase() === 'undefined' || n.toLowerCase() === 'null';
                 if (user) {
-                    this._user_cache.set(uid, name);
+                    if (!invalid(name)) { this._user_cache.set(uid, name as string); sanitizedEntries.push({ name: name as string, id: uid }); }
                 } else {
-                    this._group_cache.set(uid, name);
+                    if (!invalid(name)) { this._group_cache.set(uid, name as string); sanitizedEntries.push({ name: name as string, id: uid }); }
+                }
+            }
+            // if sanitizedEntries count differs from total lines, rewrite cache file to a sanitized subset
+            if (sanitizedEntries.length !== lines.length) {
+                try {
+                    const out = sanitizedEntries.map(x => `${x.name}::${x.id}`).join('\n');
+                    fs.writeFileSync(cache_path, out, { encoding: 'utf8' });
+                } catch (e) {
+                    // ignore write errors
                 }
             }
         } catch (e) {
