@@ -27,7 +27,7 @@
         {
             "name": "Launch Tests",
             "type": "extensionHost",
-            "request": "launch",
+            "request": "launch"
             "runtimeExecutable": "${execPath}",
             "args": ["--extensionDevelopmentPath=${workspaceFolder}", "--extensionTestsPath=${workspaceFolder}/out/test" ],
             "preLaunchTask": "npm: compile",

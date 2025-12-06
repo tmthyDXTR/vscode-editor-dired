@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 0.1.5 - 2025-12-06
+
+  - Add: Multi-selection and marking single files with ctrl+space, multi-delete, multi-copy
+
+
 ## Version 0.1.4 - 2025-12-06
 
   - Add: Human-friendly size formatting

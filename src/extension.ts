@@ -5,6 +5,7 @@ import * as os from "os";
 import FileItem from "./fileItem";
 import DiredProvider from "./provider";
 import { autocompletedInputBox } from "./autocompletedInputBox";
+import debugUi from "./debugUi";
 
 // Move recursive helpers to module scope to avoid recreating closures every time
 async function copyRecursive(src: string, dest: string) {
@@ -41,6 +42,23 @@ export function activate(context: vscode.ExtensionContext) {
 
     const provider = new DiredProvider(fixed_window);
 
+    // Decoration type used to highlight the filename portion of marked items
+    const markedDecoration = vscode.window.createTextEditorDecorationType({
+        backgroundColor: new vscode.ThemeColor('editor.selectionBackground'),
+        borderRadius: '2px'
+    });
+    context.subscriptions.push(markedDecoration);
+
+    // Decoration used to render the '*' marker at the start of the line
+    const markerDecoration = vscode.window.createTextEditorDecorationType({
+        before: {
+            contentText: '*',
+            margin: '0 6px 0 0',
+            color: new vscode.ThemeColor('editor.foreground')
+        }
+    });
+    context.subscriptions.push(markerDecoration);
+
     // Persistent status bar item for last action with undo
     const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusItem.command = 'extension.dired.undoLastAction';
@@ -71,10 +89,20 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register the Dired provider as a FileSystemProvider so dired:// documents are editable.
     // This lets users edit filenames inline and save (writeFile) will be invoked.
-    const providerRegistrations = vscode.Disposable.from(
-        // Cast to `any` to satisfy the TS signature while keeping the class in one place.
-        vscode.workspace.registerFileSystemProvider(DiredProvider.scheme, provider as any, { isCaseSensitive: true }),
-    );
+    // Guard registration so activation does not fail if another extension already
+    // registered the same scheme (e.g., after renaming the extension or when
+    // another copy is installed in the host).
+    let providerRegistrations: vscode.Disposable;
+    try {
+        const reg = vscode.workspace.registerFileSystemProvider(DiredProvider.scheme, provider as any, { isCaseSensitive: true });
+        providerRegistrations = vscode.Disposable.from(reg);
+    } catch (err) {
+        // If a provider for this scheme is already registered, don't crash.
+        console.warn('Dired: failed to register FileSystemProvider for scheme', DiredProvider.scheme, err);
+        try { vscode.window.showWarningMessage('Dired: another extension already provides the "dired" scheme. Some features may be limited. Consider removing the duplicate extension.'); } catch (e) { }
+        // Provide a noop disposable so later context.subscriptions.push works uniformly.
+        providerRegistrations = new vscode.Disposable(() => { /* noop */ });
+    }
     const commandOpen = vscode.commands.registerCommand("extension.dired.open", () => {
         let dir = vscode.workspace.rootPath;
         const at = vscode.window.activeTextEditor;
@@ -195,7 +223,35 @@ export function activate(context: vscode.ExtensionContext) {
             });
     });
     const commandCopy = vscode.commands.registerCommand("extension.dired.copy", () => {
-        // Ensure there's a selected file/folder in the active dired buffer before prompting
+        const marked = provider.getMarkedPaths() || [];
+        // If multiple marked files exist, prompt for target directory and copy all
+        if (marked.length > 1) {
+            const cwd = provider.dirname || require('os').homedir();
+            const defaultDest = path.join(cwd, 'marked-copy');
+            vscode.window.showInputBox({ prompt: 'Copy marked files to directory', value: defaultDest })
+                .then(async (dest: string | undefined) => {
+                    if (!dest) return;
+                    try {
+                        await fs.promises.mkdir(dest, { recursive: true });
+                        for (const src of marked) {
+                            const destPath = path.join(dest, path.basename(src));
+                            try {
+                                await copyRecursive(src, destPath);
+                            } catch (e) {
+                                // try fallback copy per-file
+                                try { await fs.promises.copyFile(src, destPath); } catch (ee) { }
+                            }
+                        }
+                        vscode.window.setStatusBarMessage(`Copied ${marked.length} files to ${dest}`, 3000);
+                        try { await provider.notifyDirChanged(dest); } catch (e) { }
+                    } catch (err) {
+                        vscode.window.setStatusBarMessage(`Failed to copy marked files: ${err}`, 5000);
+                    }
+                });
+            return;
+        }
+
+        // Single file fallback: behave like before
         const selected = provider.getSelectedPath();
         if (!selected) {
             vscode.window.setStatusBarMessage('No file or folder selected to copy', 3000);
@@ -216,50 +272,103 @@ export function activate(context: vscode.ExtensionContext) {
     const commandDelete = vscode.commands.registerCommand("extension.dired.delete", async () => {
         const item = await vscode.window.showQuickPick(["Yes", "No"], { placeHolder: "Delete this file?" });
         if (item !== "Yes") return;
-
-        // Determine selected path
-        const selected = provider.getSelectedPath();
+        // Determine marked selections first
+        const marked = provider.getMarkedPaths() || [];
         const cwd = provider.dirname;
-        if (!selected || !cwd) {
-            vscode.window.setStatusBarMessage('No file selected to delete', 3000);
-            return;
-        }
-        // Prevent deleting the header directory itself
-        if (path.resolve(cwd) === path.resolve(selected)) {
-            vscode.window.setStatusBarMessage('Cannot delete the directory header', 3000);
+        if ((!marked || marked.length === 0)) {
+            // Single-delete fallback
+            const selected = provider.getSelectedPath();
+            if (!selected || !cwd) {
+                vscode.window.setStatusBarMessage('No file selected to delete', 3000);
+                return;
+            }
+            // Prevent deleting the header directory itself
+            if (path.resolve(cwd) === path.resolve(selected)) {
+                vscode.window.setStatusBarMessage('Cannot delete the directory header', 3000);
+                return;
+            }
+            try {
+                const stat = await fs.promises.stat(selected);
+                const isDir = stat.isDirectory();
+                // Create a backup copy to allow undo
+                const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
+                await fs.promises.mkdir(backupRoot, { recursive: true });
+                const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
+                const backupPath = path.join(backupRoot, backupName);
+                // Copy recursively to backup using module-level helper
+                await copyRecursive(selected, backupPath);
+
+                // Move original to OS Trash
+                try {
+                    await vscode.workspace.fs.delete(vscode.Uri.file(selected), { useTrash: true });
+                } catch (e) {
+                    // Fallback to fs rm if workspace API fails
+                    if (isDir) {
+                        try { await fs.promises.rm(selected, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(selected, { recursive: true } as any); } catch {} }
+                    } else {
+                        try { await fs.promises.unlink(selected); } catch {}
+                    }
+                }
+
+                // Remember last action for undo
+                setLastAction({ type: 'delete', path: selected, backup: backupPath, isDirectory: isDir });
+                // Notify provider to refresh that directory listing directly (avoids relying on this.dirname)
+                try { await provider.notifyDirChanged(path.dirname(selected)); } catch {}
+                vscode.window.setStatusBarMessage(`${selected} moved to Trash (undo available)`, 5000);
+            } catch (err) {
+                vscode.window.setStatusBarMessage(`Failed to delete ${selected}: ${err}`, 5000);
+            }
             return;
         }
 
+        // Multi-delete: copy all marked items into a single backup directory, then remove
         try {
-            const stat = await fs.promises.stat(selected);
-            const isDir = stat.isDirectory();
-            // Create a backup copy to allow undo
+            if (!cwd) {
+                vscode.window.setStatusBarMessage('No active directory for multi-delete', 3000);
+                return;
+            }
+            const markedFiltered = marked.filter(p => path.resolve(p) !== path.resolve(cwd));
+            if (markedFiltered.length === 0) {
+                vscode.window.setStatusBarMessage('No valid marked files to delete', 3000);
+                return;
+            }
             const backupRoot = path.join(os.tmpdir(), 'vscode-dired-backup');
             await fs.promises.mkdir(backupRoot, { recursive: true });
-            const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-${path.basename(selected)}`;
+            const backupName = `${Date.now()}-${Math.random().toString(36).slice(2,8)}-multi`;
             const backupPath = path.join(backupRoot, backupName);
-            // Copy recursively to backup using module-level helper
-            await copyRecursive(selected, backupPath);
-
-            // Move original to OS Trash
-            try {
-                await vscode.workspace.fs.delete(vscode.Uri.file(selected), { useTrash: true });
-            } catch (e) {
-                // Fallback to fs rm if workspace API fails
-                if (isDir) {
-                    try { await fs.promises.rm(selected, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(selected, { recursive: true }); } catch {} }
-                } else {
-                    try { await fs.promises.unlink(selected); } catch {}
+            await fs.promises.mkdir(backupPath, { recursive: true });
+            for (const src of markedFiltered) {
+                const dest = path.join(backupPath, path.basename(src));
+                try {
+                    await copyRecursive(src, dest);
+                } catch (e) {
+                    // try per-file copy fallback
+                    try { await fs.promises.copyFile(src, dest); } catch (ee) { }
+                }
+            }
+            // Now delete originals (move to trash)
+            for (const src of markedFiltered) {
+                try {
+                    await vscode.workspace.fs.delete(vscode.Uri.file(src), { useTrash: true });
+                } catch (e) {
+                    try {
+                        const stat = await fs.promises.stat(src);
+                        if (stat.isDirectory()) {
+                            try { await fs.promises.rm(src, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(src, { recursive: true } as any); } catch {} }
+                        } else {
+                            try { await fs.promises.unlink(src); } catch {}
+                        }
+                    } catch (ee) { /* ignore */ }
                 }
             }
 
-            // Remember last action for undo
-            setLastAction({ type: 'delete', path: selected, backup: backupPath, isDirectory: isDir });
-            // Notify provider to refresh that directory listing directly (avoids relying on this.dirname)
-            try { await provider.notifyDirChanged(path.dirname(selected)); } catch {}
-            vscode.window.setStatusBarMessage(`${selected} moved to Trash (undo available)`, 5000);
+            // Record last action for undo: set path to the directory so restoreRecursive
+            // will copy backup contents back into the folder.
+            setLastAction({ type: 'delete', path: cwd, backup: backupPath, isDirectory: true });
+            try { await provider.notifyDirChanged(cwd); } catch (e) { }
+            vscode.window.setStatusBarMessage(`Deleted ${markedFiltered.length} items (undo available)`, 5000);
         } catch (err) {
-            vscode.window.setStatusBarMessage(`Failed to delete ${selected}: ${err}`, 5000);
+            vscode.window.setStatusBarMessage(`Failed to delete marked files: ${err}`, 5000);
         }
     });
 
@@ -276,6 +385,62 @@ export function activate(context: vscode.ExtensionContext) {
         provider.select();
         vscode.window.setStatusBarMessage(`Dired: selection updated`, 1500);
     });
+    const commandToggleSelect = vscode.commands.registerCommand("extension.dired.toggleSelect", () => {
+        try {
+            provider.toggleSelectCurrent();
+        } catch (e) { /* ignore */ }
+    });
+    const commandShowMarked = vscode.commands.registerCommand('extension.dired.showMarked', () => {
+        try { debugUi.showMarkedInActiveBuffer(provider.getMarkedPaths()); } catch (e) { /* ignore */ }
+    });
+
+    // Helper to update decorations in the active Dired editor to highlight
+    // the filename portion of marked items.
+    function updateMarkedDecorations(editor?: vscode.TextEditor | undefined) {
+        try {
+            const ed = editor || vscode.window.activeTextEditor;
+            if (!ed || !ed.document || ed.document.uri.scheme !== DiredProvider.scheme) {
+                // clear decorations in any visible dired editors
+                for (const e of vscode.window.visibleTextEditors) {
+                    try { if (e.document && e.document.uri.scheme === DiredProvider.scheme) e.setDecorations(markedDecoration, []); } catch (er) { }
+                }
+                return;
+            }
+
+            // Derive directory from header like provider does
+            let header = ed.document.lineAt(0).text || '';
+            header = header.replace(/:\s*$/, '');
+            header = header.replace(/^Dired:\s*/, '').trim();
+            const dir = header || '.';
+
+            const marked = new Set(provider.getMarkedPaths().map(p => path.resolve(p)));
+            const opts: vscode.DecorationOptions[] = [];
+            const markerOpts: vscode.DecorationOptions[] = [];
+            for (let i = 1; i < ed.document.lineCount; i++) {
+                try {
+                    const line = ed.document.lineAt(i).text;
+                    if (!line || !line.trim()) continue;
+                    const item = FileItem.parseLine(dir, line);
+                    if (!item || !item.fileName) continue;
+                    const abs = path.resolve(dir, item.fileName);
+                    if (!marked.has(abs)) continue;
+                    const startCol = (typeof item.startColumn === 'number') ? item.startColumn : Math.max(0, line.lastIndexOf(item.fileName));
+                    const range = new vscode.Range(new vscode.Position(i, startCol), new vscode.Position(i, startCol + item.fileName.length));
+                    opts.push({ range, hoverMessage: 'Marked' });
+                    // marker at line start
+                    try { markerOpts.push({ range: new vscode.Range(new vscode.Position(i, 0), new vscode.Position(i, 0)) }); } catch (e) { }
+                } catch (e) { /* ignore parse errors */ }
+            }
+            ed.setDecorations(markedDecoration, opts);
+            ed.setDecorations(markerDecoration, markerOpts);
+        } catch (e) { /* ignore errors while decorating */ }
+    }
+
+    // Update decorations when provider notifies or active editor changes or doc changes
+    try { provider.onDidChange(() => updateMarkedDecorations()); } catch (e) { }
+    try { provider.onDidSelectChange(() => updateMarkedDecorations()); } catch (e) { }
+    try { vscode.window.onDidChangeActiveTextEditor((ed) => updateMarkedDecorations(ed)); } catch (e) { }
+    try { vscode.workspace.onDidChangeTextDocument((ev) => { if (ev.document && ev.document.uri.scheme === DiredProvider.scheme) updateMarkedDecorations(); }); } catch (e) { }
     const commandUnselect = vscode.commands.registerCommand("extension.dired.unselect", () => {
         provider.unselect();
         vscode.window.setStatusBarMessage(`Dired: selection updated`, 1500);
@@ -425,6 +590,8 @@ export function activate(context: vscode.ExtensionContext) {
         commandCreateFile,
         commandRename,
         commandCopy,
+        commandToggleSelect,
+        commandShowMarked,
         commandGoUpDir,
         commandCopyName,
         commandRefresh,

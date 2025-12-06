@@ -1,8 +1,8 @@
 {
-	"name": "vscode-dired-local",
-	"displayName": "vscode-dired (local edit by supacoda)",
-	"description": "dired(File Manager) for VSCode, like Emacs",
-	"version": "0.1.4-local",
+	"name": "vscode-dired-emacs",
+	"displayName": "vscode-dired-emacs",
+	"description": "dired(Keyboard File Manager) for VSCode, like Emacs",
+	"version": "0.1.5",
 	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
@@ -16,26 +16,7 @@
 		"vscode": "^1.75.0"
 	},
 	"activationEvents": [
-		"onCommand:extension.dired.open",
-		"onCommand:extension.dired.copyPath",
-		"onCommand:extension.dired.openTerminal",
-		"onCommand:extension.dired.toggleDotFiles",
-		"onCommand:extension.dired.enter",
-		"onCommand:extension.dired.createDir",
-		"onCommand:extension.dired.rename",
-		"onCommand:extension.dired.copy",
-		"onCommand:extension.dired.delete",
-		"onCommand:extension.dired.goUpDir",
-		"onCommand:extension.dired.refresh",
-		"onCommand:extension.dired.select",
-		"onCommand:extension.dired.unselect",
-		"onCommand:extension.dired.close",
-		"onCommand:extension.dired.createFile",
-		"onCommand:extension.dired.copyName",
-		"onCommand:extension.dired.undoLastAction",
-		"onCommand:extension.dired.toggleMetaFiles",
-		"onCommand:extension.dired.findInFolder",
-		"onLanguage:dired"
+
 	],
 	"categories": [
 		"Other"
@@ -55,6 +36,10 @@
 				"command": "extension.dired.openTerminal",
 				"title": "Open terminal in current dired folder"
 			},
+			{
+                "command": "extension.dired.showMarked",
+                "title": "Dired: Show marked files (Debug)"
+            },
 			{
 				"command": "extension.dired.copyPath",
 				"title": "Copy path of selected file"
@@ -102,6 +87,10 @@
 			{
 				"command": "extension.dired.select",
 				"title": "Select file"
+			},
+			{
+				"command": "extension.dired.toggleSelect",
+				"title": "Toggle select current file"
 			},
 			{
 				"command": "extension.dired.unselect",
@@ -188,6 +177,11 @@
 			{
 				"key": "ctrl+x f",
 				"command": "extension.dired.findInFolder",
+				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
+			},
+			{
+				"key": "ctrl+space",
+				"command": "extension.dired.toggleSelect",
 				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
 			}
 		],

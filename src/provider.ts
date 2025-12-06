@@ -32,6 +32,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     static scheme = 'dired'; // ex: dired://<directory>
 
     private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
+    // Event emitter to notify selection changes (mark/unmark) without
+    // modifying the document. This allows the extension to update
+    // decorations without re-rendering the dired buffer.
+    private _onDidSelectChange = new vscode.EventEmitter<void>();
     // Emit file change events for FileSystemProvider API
     private _onDidChangeFile = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     private _fixed_window: boolean;
@@ -50,6 +54,9 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _watchDebounceTimers: Map<string, NodeJS.Timeout> = new Map();
     // Map of directory -> last cursor position { line, col }
     private _lastCursorPos: Map<string, { line: number, col: number }> = new Map();
+    // In-memory set of absolute paths that are marked/selected. Stored in-memory
+    // to avoid modifying the open dired document (which causes save prompts).
+    private _selectedPaths: Set<string> = new Set();
 
     constructor(fixed_window: boolean) {
         this._fixed_window = fixed_window;
@@ -84,6 +91,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
 
     get onDidChange() {
         return this._onDidChange.event;
+    }
+
+    get onDidSelectChange() {
+        return this._onDidSelectChange.event;
     }
 
     // FileSystemProvider event
@@ -485,6 +496,17 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                     this._lastCursorPos.set(path.resolve(prevDir), { line: cursor.line, col: cursor.character });
                 }
             }
+            // If the user is switching to a different directory, clear the
+            // in-memory selection set so selections do not persist across
+            // directories. This prevents selections from being "cached"
+            // when navigating folders.
+            try {
+                if (prevDir && path.resolve(prevDir) !== path.resolve(dirPath)) {
+                    this._selectedPaths.clear();
+                    try { this._dirCache.delete(prevDir); } catch (e) { }
+                    try { this._dirCache.delete(dirPath); } catch (e) { }
+                }
+            } catch (e) { /* ignore path/resolve errors */ }
         } catch (e) { /* ignore saving errors */ }
 
         const uri = (this._fixed_window && !this._show_path_in_tab) ? FIXED_URI : this.createPathUriForDir(dirPath);
@@ -727,6 +749,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                     const stat = await fs.promises.stat(p);
                     const fi = FileItem.create(dirname, filename, stat);
                     if (!fi) continue;
+                    // Mark selected true if the absolute path is present in
+                    // the in-memory `_selectedPaths` set.
+                    const abs = path.resolve(dirname, fi.fileName);
+                    const isSelected = this._selectedPaths.has(abs);
                     // Store minimal fields needed to re-create a FileItem on demand
                     lightEntries.push({
                         filename: fi.fileName,
@@ -740,7 +766,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                         hour: (fi as any)._hour,
                         min: (fi as any)._min,
                         modeStr: (fi as any)._modeStr,
-                        selected: false
+                        selected: !!isSelected
                     });
                 } catch (err) {
                     // skip entries we can't stat
@@ -889,14 +915,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (!doc) {
             return;
         }
-        this._buffers = [];
-        for (let i = 0; i < doc.lineCount; i++) {
-            this._buffers.push(doc.lineAt(i).text);
-        }
 
         let start = 0;
         let end = 0;
-        let allowSelectDot = false; // Want to copy emacs's behavior exactly
+        let allowSelectDot = false; // emulate Emacs behavior
 
         if (at.selection.isEmpty) {
             const cursor = at.selection.active;
@@ -907,7 +929,6 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
                 allowSelectDot = true;
                 start = cursor.line;
                 end = cursor.line + 1;
-                vscode.commands.executeCommand("cursorMove", { to: "down", by: "line" });
             }
         } else {
             start = at.selection.start.line;
@@ -915,17 +936,78 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         }
 
         for (let i = start; i < end; i++) {
-            const f = FileItem.parseLine(this.dirname, this._buffers[i]);
-            if (f.fileName === "." || f.fileName === "..") {
-                if (!allowSelectDot) {
-                    continue;
+            try {
+                const f = FileItem.parseLine(this.dirname, doc.lineAt(i).text);
+                if (!f) continue;
+                if (f.fileName === '.' || f.fileName === '..') {
+                    if (!allowSelectDot) continue;
                 }
-            }
-            f.select(value);
-            this._buffers[i] = f.line();
+                const abs = path.resolve(this.dirname, f.fileName);
+                if (value) this._selectedPaths.add(abs);
+                else this._selectedPaths.delete(abs);
+            } catch (e) { /* ignore parse errors */ }
         }
-        const uri = this.uri;
-        this._onDidChange.fire(uri);
+
+        // Notify selection change so the extension can update decorations
+        try { this._onDidSelectChange.fire(); } catch (e) { }
+    }
+
+    // Toggle selection state for the currently active data-line (single row)
+    public async toggleSelectCurrent() {
+        if (!this.dirname) return;
+        const at = vscode.window.activeTextEditor;
+        if (!at) return;
+        const doc = at.document;
+        if (!doc) return;
+        const cursor = at.selection.active;
+        if (cursor.line < 1) return;
+        // If user has a multi-line selection, toggle all lines in the selection
+        // at once. Determine the selection range and compute whether to mark or
+        // unmark based on whether all items are currently selected.
+        try {
+            if (!at.selection.isEmpty) {
+                const startLine = Math.max(1, at.selection.start.line);
+                const endLine = Math.max(1, at.selection.end.line);
+                let total = 0;
+                let selectedCount = 0;
+                const candidates: { abs: string, name: string }[] = [];
+                for (let i = startLine; i <= endLine; i++) {
+                    try {
+                        const line = doc.lineAt(i).text;
+                        if (!line || !line.trim()) continue;
+                        const f = FileItem.parseLine(this.dirname, line);
+                        if (!f) continue;
+                        if (f.fileName === '.' || f.fileName === '..') continue;
+                        const abs = path.resolve(this.dirname, f.fileName);
+                        candidates.push({ abs, name: f.fileName });
+                        total++;
+                        if (this._selectedPaths.has(abs)) selectedCount++;
+                    } catch (e) { /* ignore parse errors */ }
+                }
+                if (total === 0) return;
+                const newSelected = selectedCount !== total; // if not all selected -> select all
+                for (const c of candidates) {
+                    if (newSelected) this._selectedPaths.add(c.abs); else this._selectedPaths.delete(c.abs);
+                }
+                try { this._onDidSelectChange.fire(); } catch (e) { }
+                try { vscode.window.setStatusBarMessage(`${newSelected ? 'Marked' : 'Unmarked'} ${candidates.length} files`, 1500); } catch (e) { }
+                return;
+            }
+
+            // Single-line toggle
+            const lineIdx = cursor.line;
+            const f = FileItem.parseLine(this.dirname, doc.lineAt(lineIdx).text);
+            if (!f) return;
+            if (f.fileName === '.' || f.fileName === '..') return;
+            const abs = path.resolve(this.dirname, f.fileName);
+            const currentlySelected = this._selectedPaths.has(abs);
+            const newSelected = !currentlySelected;
+            if (newSelected) this._selectedPaths.add(abs); else this._selectedPaths.delete(abs);
+            try { this._onDidSelectChange.fire(); } catch (e) { }
+            try { if (newSelected) vscode.window.setStatusBarMessage(`Marked ${f.fileName}`, 1500); else vscode.window.setStatusBarMessage(`Unmarked ${f.fileName}`, 1000); } catch (e) { }
+        } catch (e) {
+            // ignore parse errors
+        }
     }
 
     private getTextDocumentShowOptions(fixed_window: boolean): vscode.TextDocumentShowOptions {
@@ -956,6 +1038,15 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             } catch (e) { /* ignore */ }
         } catch (e) {
             // ignore
+        }
+    }
+
+    // Return an array of absolute paths that are currently marked.
+    public getMarkedPaths(): string[] {
+        try {
+            return Array.from(this._selectedPaths.values());
+        } catch (e) {
+            return [];
         }
     }
 }
