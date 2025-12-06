@@ -22,3 +22,7 @@ Thumbs.db
 
 ## Ensure compiled runtime output is included in the VSIX
 !out/**
+
+# keep essential docs and license
+!README.md
+!LICENSE
