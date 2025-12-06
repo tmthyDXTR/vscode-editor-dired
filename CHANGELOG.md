@@ -2,8 +2,10 @@
 
 ## Version 0.1.5 - 2025-12-06
 
-  - Add: Multi-selection and marking single files with ctrl+space, multi-delete, multi-copy
-
+  - Add: Multi-selection and marking (use `Ctrl+Space` to mark/unmark files); supports marking multiple contiguous files via selection.
+  - Add: Multi-copy / Multi-delete — copy or delete all marked files at once; deletions are backed up so `Undo Last Action` can restore them.
+  - Add: In-memory selection model and editor decorations so marking does not edit the Dired buffer (prevents save prompts) and highlights filenames like normal selection.
+  - Add: Debug helper `Dired: Show marked files (Debug)` and `DiredProvider.getMarkedPaths()` API for extensions/commands to read the canonical marked set.
 
 ## Version 0.1.4 - 2025-12-06
 
