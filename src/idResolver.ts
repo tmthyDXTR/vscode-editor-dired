@@ -1,8 +1,6 @@
 'use strict';
 
-import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as readline from 'readline';
 import * as path from 'path'
 
 export class IDResolver {

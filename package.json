@@ -2,7 +2,7 @@
 	"name": "vscode-dired-emacs",
 	"displayName": "vscode-dired-emacs",
 	"description": "dired(Keyboard File Manager) for VSCode, like Emacs",
-	"version": "0.1.5",
+	"version": "0.1.6",
 	"publisher": "tmthyDXTR",
 	"license": "Apache-2.0",
 	"repository": {
@@ -155,6 +155,11 @@
 				"when": "dired.open && editorTextFocus && !findWidgetVisible && !inQuickOpen"
 			},
 			{
+				"key": "enter",
+				"command": "extension.dired.acceptPrompt",
+				"when": "dired.promptOpen && editorTextFocus"
+			},
+			{
 				"key": "ctrl+x shift+d",
 				"command": "extension.dired.delete",
 				"when": "dired.open &&  editorTextFocus && !findWidgetVisible && !inQuickOpen"
@@ -207,12 +212,12 @@
 			"properties": {
 				"dired.fixed_window": {
 					"type": "boolean",
-					"default": "false",
+					"default": false,
 					"description": "Open dired in the same tab or another tab."
 				},
 				"dired.ask_directory": {
 					"type": "boolean",
-					"default": "true",
+					"default": true,
 					"description": "Ask directory on opening dired."
 				}
 			,

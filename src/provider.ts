@@ -5,7 +5,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import FileItem from './fileItem';
-import * as autoBox from './autocompletedInputBox'
 
 // Reuse encoder/decoder instances to avoid allocating them repeatedly in hot paths
 const TEXT_ENCODER = new TextEncoder();

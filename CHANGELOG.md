@@ -1,5 +1,11 @@
 # Changelog
 
+## Version 0.1.6 - 2025-12-07
+
+  - Add: Editor-based `Dired open:` prompt backed by an in-memory editor
+  - Add: Path autocompletion in the prompt
+  - Fix: Multiple UX and robustness fixes around prompt lifecycle and completion handling; typing and lint improvements
+
 ## Version 0.1.5 - 2025-12-06
 
   - Add: Multi-selection and marking (use `Ctrl+Space` to mark/unmark files); supports marking multiple contiguous files via selection.

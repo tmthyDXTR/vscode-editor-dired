@@ -8,7 +8,7 @@ import * as path from 'path';
 const Mode = require('stat-mode');
 import DiredProvider from './provider';
 import { IDResolver } from './idResolver';
-import { URL, pathToFileURL } from 'url';
+import { pathToFileURL } from 'url';
 
 
 export default class FileItem {
@@ -61,7 +61,7 @@ export default class FileItem {
         try {
             const line = f.line();
             const idx = line.lastIndexOf(filename);
-            if (idx >= 0) (f as any)._startColumn = idx;
+            if (idx >= 0) f._startColumn = idx;
         } catch (e) { /* ignore */ }
         return f;
     }
@@ -96,7 +96,7 @@ export default class FileItem {
         const prefix = `${se} ${this._modeStr} ${u} ${g} ${size} ${month} ${day} ${hour}:${min} `;
         // Store start column of filename in the item so callers can accurately
         // compute link ranges and cursor positions without re-scanning the line.
-        try { (this as any)._startColumn = prefix.length; } catch (e) { /* ignore */ }
+        try { this._startColumn = prefix.length; } catch (e) { /* ignore */ }
         return `${prefix}${this._filename}`;
     }
 
@@ -168,7 +168,7 @@ export default class FileItem {
         // Compute start column from the original matched substring where possible
         let startCol: number | undefined = undefined;
         try {
-            const matchIndex = (m as any).index as number | undefined;
+            const matchIndex = (exec && typeof exec.index === 'number') ? exec.index : undefined;
             if (typeof matchIndex === 'number') {
                 const matchedStr = m[0];
                 const rel = matchedStr.lastIndexOf(filename);

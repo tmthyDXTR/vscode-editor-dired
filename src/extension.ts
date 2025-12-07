@@ -38,9 +38,148 @@ export function activate(context: vscode.ExtensionContext) {
     "use strict";
     const cfg = vscode.workspace.getConfiguration("dired");
     const fixed_window = cfg.get<boolean>("fixed_window") || false;
-    const ask_dir = cfg.get<boolean>("ask_dir") || false;
+    const ask_dir = cfg.get<boolean>("ask_directory") || false;
 
     const provider = new DiredProvider(fixed_window);
+
+    // In-memory FileSystemProvider for an editable prompt document that lives under
+    // the `dired-prompt:` scheme. This allows the document to be editable while
+    // keeping its contents in-memory. We auto-save edits so closing the tab
+    // doesn't trigger a "Save?" prompt.
+    const promptScheme = 'dired-prompt';
+    type InMemoryEntry = { content: Uint8Array, mtime: number };
+    class InMemoryFs implements vscode.FileSystemProvider {
+        private _emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
+        readonly onDidChangeFile: vscode.Event<vscode.FileChangeEvent[]> = this._emitter.event;
+        private store: Map<string, InMemoryEntry> = new Map();
+        watch(): vscode.Disposable { return new vscode.Disposable(() => {}); }
+        stat(uri: vscode.Uri): vscode.FileStat {
+            const key = uri.toString();
+            const e = this.store.get(key);
+            if (!e) throw vscode.FileSystemError.FileNotFound();
+            return { type: vscode.FileType.File, ctime: e.mtime, mtime: e.mtime, size: e.content.length };
+        }
+        readDirectory(): [string, vscode.FileType][] { return []; }
+        createDirectory(): void { throw vscode.FileSystemError.NoPermissions(); }
+        readFile(uri: vscode.Uri): Uint8Array {
+            const key = uri.toString();
+            console.log('memFs.readFile', key);
+            const e = this.store.get(key);
+            if (!e) throw vscode.FileSystemError.FileNotFound();
+            return e.content;
+        }
+        async writeFile(uri: vscode.Uri, content: Uint8Array, _options: { create: boolean, overwrite: boolean }): Promise<void> {
+            void _options;
+            const key = uri.toString();
+            console.log('memFs.writeFile', key, 'size', content.length);
+            const now = Date.now();
+            this.store.set(key, { content: content, mtime: now });
+            this._emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+        }
+        // Public helper to remove an entry from the in-memory store.
+        public deleteEntry(uri: vscode.Uri): void {
+            try { this.store.delete(uri.toString()); } catch (e) { /* ignore */ }
+        }
+        delete(): void { throw vscode.FileSystemError.NoPermissions(); }
+        rename(): void { throw vscode.FileSystemError.NoPermissions(); }
+    }
+    const memFs = new InMemoryFs();
+    const memFsReg = vscode.workspace.registerFileSystemProvider(promptScheme, memFs, { isCaseSensitive: true });
+    context.subscriptions.push(memFsReg);
+
+    // Auto-save handler: when a dired-prompt document changes, call save() after
+    // a short debounce so the document doesn't remain dirty and closing won't prompt.
+    const saving = new Set<string>();
+    const debounceTimers = new Map<string, NodeJS.Timeout>();
+    // Track previous first-line content for prompt docs so we can detect
+    // deletions that cross path separators and re-trigger suggestions.
+    const prevFirstLine = new Map<string, string>();
+    const onDidChangeDisposable = vscode.workspace.onDidChangeTextDocument((ev) => {
+        try {
+            const doc = ev.document;
+            if (!doc || doc.uri.scheme !== promptScheme) return;
+            const key = doc.uri.toString();
+            // Check contentChanges for deletions that cross path separators
+            try {
+                const oldLine = prevFirstLine.get(key) || '';
+                const newLine = doc.lineAt(0).text || '';
+                // compute candidate portions after the prefix
+                const oldCand = oldLine.replace(/^Dired open:\s*/, '');
+                const newCand = newLine.replace(/^Dired open:\s*/, '');
+                // Helper to get last separator index for either slash
+                const lastSep = (s: string) => Math.max(s.lastIndexOf('\\'), s.lastIndexOf('/'));
+                // If any change was a deletion
+                let sawDeletion = false;
+                for (const ch of ev.contentChanges) {
+                    if (ch.rangeLength && ch.text === '') { sawDeletion = true; break; }
+                }
+                if (sawDeletion && oldCand.length > newCand.length) {
+                    const oldIdx = lastSep(oldCand);
+                    const newIdx = lastSep(newCand);
+                    // Trigger if deletion crossed a separator (moved to parent dir)
+                    // or the new candidate ends with a separator (user deleted to the slash)
+                    if (oldIdx !== newIdx || newCand.endsWith('\\') || newCand.endsWith('/')) {
+                        // Only trigger when this document is active in the editor
+                        const active = vscode.window.activeTextEditor;
+                        if (active && active.document && active.document.uri.toString() === key) {
+                            // Trigger suggestions asynchronously to avoid re-entrancy
+                            setTimeout(() => { try { vscode.commands.executeCommand('editor.action.triggerSuggest'); } catch (e) { /* ignore */ } }, 0);
+                        }
+                    }
+                }
+            } catch (e) { /* ignore detection errors */ }
+            const prev = debounceTimers.get(key);
+            if (prev) clearTimeout(prev);
+            const t = setTimeout(async () => {
+                debounceTimers.delete(key);
+                if (saving.has(key)) return;
+                saving.add(key);
+                try {
+                    // Ensure provider is updated by saving the document which will call writeFile
+                    await doc.save();
+                } catch (e) { /* ignore save errors */ }
+                saving.delete(key);
+            }, 200);
+            debounceTimers.set(key, t);
+            // update prevFirstLine for next change
+            try { prevFirstLine.set(key, doc.lineAt(0).text || ''); } catch (e) { }
+        } catch (e) { /* ignore */ }
+    });
+    const commandOpenTerminal = vscode.commands.registerCommand("extension.dired.openTerminal", async () => {
+        try {
+            const selectedCandidate = provider.getSelectedPath();
+            const fallback = provider.dirname || os.homedir();
+            const selected: string = selectedCandidate ? selectedCandidate : fallback;
+            let cwd: string = selected;
+            try {
+                const stat = await fs.promises.stat(selected);
+                if (stat.isFile()) cwd = path.dirname(selected);
+            } catch (e) { cwd = fallback; }
+            try {
+                const term = vscode.window.createTerminal({ cwd, name: `dired: ${path.basename(cwd)}` });
+                term.show(false);
+                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
+            } catch (e) {
+                const fallbackTerm = vscode.window.createTerminal({ cwd, name: `dired: ${path.basename(cwd)}` });
+                fallbackTerm.show(false);
+                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
+            }
+        } catch (err) {
+            vscode.window.setStatusBarMessage(`Failed to open terminal: ${err}`, 5000);
+        }
+    });
+    context.subscriptions.push(onDidChangeDisposable);
+    const onDidCloseDisposable = vscode.workspace.onDidCloseTextDocument((doc) => {
+        try {
+            if (doc && doc.uri && doc.uri.scheme === promptScheme) {
+                // cleanup stored content
+                try { memFs.deleteEntry(doc.uri); } catch (e) { }
+                try { prevFirstLine.delete(doc.uri.toString()); } catch (e) { }
+                vscode.commands.executeCommand('setContext', 'dired.promptOpen', false);
+            }
+        } catch (e) { /* ignore */ }
+    });
+    context.subscriptions.push(onDidCloseDisposable);
 
     // Decoration type used to highlight the filename portion of marked items
     const markedDecoration = vscode.window.createTextEditorDecorationType({
@@ -66,7 +205,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Last action state (persist across reloads in workspaceState)
     type LastAction = { type: 'delete'|'create', path: string, backup?: string, isDirectory?: boolean } | null;
-    let lastAction: LastAction = context.workspaceState.get('dired.lastAction') || null;
+    let lastAction: LastAction = context.workspaceState.get<LastAction>('dired.lastAction') || null;
     function setLastAction(action: LastAction) {
         lastAction = action;
         context.workspaceState.update('dired.lastAction', action);
@@ -94,7 +233,7 @@ export function activate(context: vscode.ExtensionContext) {
     // another copy is installed in the host).
     let providerRegistrations: vscode.Disposable;
     try {
-        const reg = vscode.workspace.registerFileSystemProvider(DiredProvider.scheme, provider as any, { isCaseSensitive: true });
+        const reg = vscode.workspace.registerFileSystemProvider(DiredProvider.scheme, provider as unknown as vscode.FileSystemProvider, { isCaseSensitive: true });
         providerRegistrations = vscode.Disposable.from(reg);
     } catch (err) {
         // If a provider for this scheme is already registered, don't crash.
@@ -122,27 +261,41 @@ export function activate(context: vscode.ExtensionContext) {
                 provider.openDir(dir);
                 vscode.window.setStatusBarMessage(`Dired: Opened ${dir}`, 3000);
             } else {
-                vscode.window.showInputBox({ value: dir, valueSelection: [dir.length, dir.length] })
-                        .then(async (path) => {
-                            if (!path) {
-                                return;
-                            }
-                            try {
-                                const st = await fs.promises.stat(path);
-                                if (st.isDirectory()) {
-                                    provider.openDir(path);
-                                    return;
-                                }
-                                if (st.isFile()) {
-                                    const f = new FileItem(path, "", false, true); // Incomplete FileItem just to get URI.
-                                    const uri = f.uri;
-                                    if (uri) provider.showFile(uri);
-                                    return;
-                                }
-                            } catch (e) {
-                                // ignore stat errors
-                            }
-                        });
+                (async () => {
+                    // Open an untitled editor so the user can edit the path inline (like the terminal input).
+                    // The completion provider registered above will offer file/folder completions while the
+                    // first line begins with "Dired open:".
+                    try {
+                        const initial = `Dired open: ${dir}\\`;
+                        // Build a readonly virtual document URI and open it so closing the tab
+                        // won't prompt to save (virtual docs are not dirty).
+                        const uri = vscode.Uri.parse(`${promptScheme}:/${encodeURIComponent(dir)}`);
+                        // Ensure initial content exists in the in-memory FS so the document can open.
+                        try {
+                            const initialBytes = new TextEncoder().encode(initial);
+                            console.log('writing initial prompt to memFs', uri.toString());
+                            await memFs.writeFile(uri, initialBytes, { create: true, overwrite: true });
+                        } catch (e) { console.error('failed to write initial prompt', e); }
+                        const doc = await vscode.workspace.openTextDocument(uri);
+                        const editor = await vscode.window.showTextDocument(doc, { preview: false });
+                        // set context so keybinding can trigger accept command
+                        await vscode.commands.executeCommand('setContext', 'dired.promptOpen', true);
+                        // Seed previous-first-line content so deletions are detected
+                        try { prevFirstLine.set(uri.toString(), initial); } catch (e) { }
+                        // Place the cursor at the end of the path on the first line so typing continues there
+                        try {
+                            const firstLine = doc.lineAt(0).text;
+                            const pos = new vscode.Position(0, firstLine.length);
+                            editor.selection = new vscode.Selection(pos, pos);
+                            editor.revealRange(new vscode.Range(pos, pos));
+                        } catch (e) { /* ignore selection errors */ }
+                        // Leave the prompt open; user should press Enter (bound to accept command) to open.
+                        return;
+                    } catch (e) {
+                        try { vscode.window.showErrorMessage('Dired: failed to open prompt: ' + String(e)); } catch (ee) { /* ignore UI errors */ }
+                        console.error('Dired: failed to open prompt', e);
+                    }
+                })();
             }
         }
     });
@@ -181,39 +334,10 @@ export function activate(context: vscode.ExtensionContext) {
             await context.workspaceState.update('dired.lastAction', { type: 'create', path: p });
             setTimeout(() => { /* refresh already done by provider.createDir */ }, 0);
             vscode.window.setStatusBarMessage(`Created ${p} (undo available)`, 3000);
-            // update status item
-            // reuse setLastAction by fetching the function via closure: recreate by explicitly calling
-            // But setLastAction not accessible here; instead reuse workspaceState and show statusItem
-            // We'll set status text directly
             try { statusItem.text = `$(plus) Created ${path.basename(p)} — Undo`; statusItem.tooltip = `Remove ${p}`; statusItem.show(); } catch {}
             vscode.window.setStatusBarMessage(`Created ${p}`, 3000);
         } catch (err) {
             vscode.window.setStatusBarMessage(`Failed to create directory ${p}: ${err}`, 5000);
-        }
-    });
-    const commandOpenTerminal = vscode.commands.registerCommand("extension.dired.openTerminal", async () => {
-        try {
-            const selectedCandidate = provider.getSelectedPath();
-            const fallback = provider.dirname || os.homedir();
-            const selected: string = selectedCandidate ? selectedCandidate : fallback;
-            let cwd: string = selected;
-            try {
-                const stat = await fs.promises.stat(selected);
-                if (stat.isFile()) cwd = path.dirname(selected);
-            } catch (e) { cwd = fallback; }
-            try {
-                const term = vscode.window.createTerminal({ cwd: cwd as any, name: `dired: ${path.basename(cwd)}`, location: { viewColumn: vscode.ViewColumn.Active } as any } as any);
-                // Focus the terminal so keyboard input can be typed directly
-                term.show(false);
-                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
-            } catch (e) {
-                const fallbackTerm = vscode.window.createTerminal({ cwd: cwd, name: `dired: ${path.basename(cwd)}` });
-                // Focus fallback terminal explicitly as well
-                fallbackTerm.show(false);
-                vscode.window.setStatusBarMessage(`Opened terminal in ${cwd}`, 3000);
-            }
-        } catch (err) {
-            vscode.window.setStatusBarMessage(`Failed to open terminal: ${err}`, 5000);
         }
     });
     const commandRename = vscode.commands.registerCommand("extension.dired.rename", () => {
@@ -304,7 +428,7 @@ export function activate(context: vscode.ExtensionContext) {
                 } catch (e) {
                     // Fallback to fs rm if workspace API fails
                     if (isDir) {
-                        try { await fs.promises.rm(selected, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(selected, { recursive: true } as any); } catch {} }
+                        try { await fs.promises.rm(selected, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(selected); } catch {} }
                     } else {
                         try { await fs.promises.unlink(selected); } catch {}
                     }
@@ -354,7 +478,7 @@ export function activate(context: vscode.ExtensionContext) {
                     try {
                         const stat = await fs.promises.stat(src);
                         if (stat.isDirectory()) {
-                            try { await fs.promises.rm(src, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(src, { recursive: true } as any); } catch {} }
+                            try { await fs.promises.rm(src, { recursive: true, force: true }); } catch { try { await fs.promises.rmdir(src); } catch {} }
                         } else {
                             try { await fs.promises.unlink(src); } catch {}
                         }
@@ -598,6 +722,7 @@ export function activate(context: vscode.ExtensionContext) {
         commandClose,
         commandDelete,
         commandSelect,
+        commandUnselect,
         providerRegistrations
     );
     context.subscriptions.push(commandCopyPath);
@@ -630,7 +755,7 @@ export function activate(context: vscode.ExtensionContext) {
                 query: '',
                 filesToInclude: includePattern,
                 triggerSearch: false
-            } as any);
+            });
             vscode.window.setStatusBarMessage(`Dired: Searching in ${dir}`, 1500);
         } catch (err) {
             vscode.window.setStatusBarMessage(`Dired search failed: ${err}`, 5000);
@@ -691,6 +816,117 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(linkProvider);
+
+    // Completion provider for the temporary "Dired open" editor.
+    // It only returns items when the document's first line begins with "Dired open:"
+    const editorPromptCompletion = vscode.languages.registerCompletionItemProvider({ scheme: 'dired-prompt' }, {
+        async provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
+            try {
+                const first = document.lineAt(0).text || '';
+                if (!first.startsWith('Dired open:')) return undefined;
+                // compute the current input after the prefix on the first line
+                const prefix = first.replace(/^Dired open:\s*/, '');
+                const line = document.lineAt(position.line).text;
+                // only provide completions when on the first line
+                if (position.line !== 0) return undefined;
+                // cursor index relative to full line
+                const relIdx = position.character;
+                const beforeCursor = line.substring('Dired open: '.length, relIdx);
+                let candidate = beforeCursor && beforeCursor.length ? beforeCursor : prefix;
+                if (!candidate) candidate = require('os').homedir();
+                if (!path.isAbsolute(candidate)) candidate = path.join(vscode.workspace.rootPath || require('os').homedir(), candidate);
+                const items: vscode.CompletionItem[] = [];
+                try {
+                    const stat = await fs.promises.stat(candidate);
+                    if (stat.isDirectory()) {
+                        const names = await fs.promises.readdir(candidate);
+                        // parent
+                        const parent = path.join(candidate, '..');
+                        const startCol = 'Dired open: '.length;
+                        const lineLen = document.lineAt(0).text.length;
+                        const replaceRange = new vscode.Range(new vscode.Position(0, startCol), new vscode.Position(0, lineLen));
+                        const pitem = new vscode.CompletionItem(parent, vscode.CompletionItemKind.Folder) as vscode.CompletionItem & { range?: vscode.Range };
+                        pitem.detail = '.. (parent)';
+                        // Append a trailing slash for directories so users can see/select it
+                        pitem.insertText = parent + '\\';
+                        // Reopen suggestions after inserting a directory so user can continue completing
+                        pitem.command = { command: 'editor.action.triggerSuggest', title: 'Trigger Suggest' };
+                        pitem.range = replaceRange;
+                        items.push(pitem);
+                        for (const name of names) {
+                            const full = path.join(candidate, name);
+                            try {
+                                const s = await fs.promises.stat(full);
+                                const it = new vscode.CompletionItem(full, s.isDirectory() ? vscode.CompletionItemKind.Folder : vscode.CompletionItemKind.File) as vscode.CompletionItem & { range?: vscode.Range };
+                                it.detail = name + (s.isDirectory() ? '\\' : '');
+                                // For directories append a trailing slash in the inserted text
+                                it.insertText = s.isDirectory() ? (full + '\\') : full;
+                                if (s.isDirectory()) {
+                                    it.command = { command: 'editor.action.triggerSuggest', title: 'Trigger Suggest' };
+                                }
+                                it.range = replaceRange;
+                                items.push(it);
+                            } catch (e) { }
+                        }
+                        return items;
+                    }
+                } catch (e) {
+                    const parent = path.dirname(candidate || '');
+                    try {
+                        const names = await fs.promises.readdir(parent);
+                        const startCol = 'Dired open: '.length;
+                        const lineLen = document.lineAt(0).text.length;
+                        const replaceRange = new vscode.Range(new vscode.Position(0, startCol), new vscode.Position(0, lineLen));
+                        for (const name of names) {
+                            const full = path.join(parent, name);
+                            try {
+                                const s = await fs.promises.stat(full);
+                                const it = new vscode.CompletionItem(full, s.isDirectory() ? vscode.CompletionItemKind.Folder : vscode.CompletionItemKind.File) as vscode.CompletionItem & { range?: vscode.Range };
+                                it.detail = name + (s.isDirectory() ? '\\' : '');
+                                it.insertText = s.isDirectory() ? (full + '\\') : full;
+                                if (s.isDirectory()) {
+                                    it.command = { command: 'editor.action.triggerSuggest', title: 'Trigger Suggest' };
+                                }
+                                it.range = replaceRange;
+                                items.push(it);
+                            } catch (e) { }
+                        }
+                        return items;
+                    } catch (e) { return undefined; }
+                }
+                return undefined;
+            } catch (e) { return undefined; }
+        }
+    }, '/', '\\', '.');
+    context.subscriptions.push(editorPromptCompletion);
+
+    // Command to accept the Dired prompt from the readonly virtual document
+    const commandAcceptPrompt = vscode.commands.registerCommand('extension.dired.acceptPrompt', async () => {
+        try {
+            const ed = vscode.window.activeTextEditor;
+            if (!ed || !ed.document || ed.document.uri.scheme !== 'dired-prompt') return;
+            const first = ed.document.lineAt(0).text.replace(/^Dired open:\s*/, '').trim();
+            if (!first) return;
+            const baseDir = decodeURIComponent(ed.document.uri.path || '').replace(/^\//, '') || vscode.workspace.rootPath || os.homedir();
+            const resolved = path.isAbsolute(first) ? first : path.join(baseDir, first);
+            try {
+                const st = await fs.promises.stat(resolved);
+                if (st.isDirectory()) {
+                    await provider.openDir(resolved);
+                } else if (st.isFile()) {
+                    const f = new FileItem(resolved, "", false, true);
+                    const uri = f.uri;
+                    if (uri) provider.showFile(uri);
+                }
+            } catch (e) {
+                // ignore
+            }
+            // Close the prompt editor
+            try { await vscode.commands.executeCommand('workbench.action.closeActiveEditor'); } catch (e) { }
+            await vscode.commands.executeCommand('setContext', 'dired.promptOpen', false);
+        } catch (e) { /* ignore */ }
+    });
+    context.subscriptions.push(commandAcceptPrompt);
 
     // Debug command to inspect computed link start columns in the current Dired buffer
     const commandDebugLinks = vscode.commands.registerCommand('extension.dired.debugLinkRanges', async () => {
@@ -790,7 +1026,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(closeListener);
 
     const commandUndo = vscode.commands.registerCommand('extension.dired.undoLastAction', async () => {
-        const la: any = context.workspaceState.get('dired.lastAction') || null;
+        const la = context.workspaceState.get<LastAction>('dired.lastAction') || null;
         if (!la) {
             vscode.window.setStatusBarMessage('No action to undo', 3000);
             return;
@@ -798,7 +1034,9 @@ export function activate(context: vscode.ExtensionContext) {
         try {
             if (la.type === 'delete') {
                 // Restore from backup using module-level helper
-                await restoreRecursive(la.backup, la.path);
+                if (la.backup) {
+                    await restoreRecursive(la.backup, la.path);
+                }
                 await context.workspaceState.update('dired.lastAction', null);
                 try { await provider.notifyDirChanged(path.dirname(la.path)); } catch {}
                 vscode.window.setStatusBarMessage(`Restored ${la.path}`, 5000);
