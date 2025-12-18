@@ -1,5 +1,10 @@
 # Changelog
 
+## Version 0.1.7 - 2025-12-18
+
+  - URI construction now uses vscode.Uri.from() to properly handle Linux paths starting with /
+  - Path separator now uses path.sep which will be / on Linux/WSL and \ on Windowsx
+
 ## Version 0.1.6 - 2025-12-07
 
   - Add: Editor-based `Dired open:` prompt backed by an in-memory editor

@@ -266,10 +266,10 @@ export function activate(context: vscode.ExtensionContext) {
                     // The completion provider registered above will offer file/folder completions while the
                     // first line begins with "Dired open:".
                     try {
-                        const initial = `Dired open: ${dir}\\`;
+                        const initial = `Dired open: ${dir}${path.sep}`;
                         // Build a readonly virtual document URI and open it so closing the tab
                         // won't prompt to save (virtual docs are not dirty).
-                        const uri = vscode.Uri.parse(`${promptScheme}:/${encodeURIComponent(dir)}`);
+                        const uri = vscode.Uri.from({ scheme: promptScheme, path: `/${encodeURIComponent(dir)}` });
                         // Ensure initial content exists in the in-memory FS so the document can open.
                         try {
                             const initialBytes = new TextEncoder().encode(initial);
