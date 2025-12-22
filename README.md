@@ -3,6 +3,8 @@
 Fork of https://github.com/shirou/vscode-dired — a lightweight, keyboard-first
 directory editor for VS Code inspired by Emacs dired.
 
+<img src="./251223_vscode-dired.gif" alt="vscode-dired demo" width="1024"/>
+
 ## Quick summary
 - Keyboard-driven file manager inside a read-only editor buffer.
 - Create, delete, rename, and copy files and directories from the keyboard.
